@@ -37,6 +37,7 @@ void RobotInit()
 
 #if defined(ONE_BOARD) || defined(CHASSIS_BOARD)
     ChassisInit();
+    chassis_power_control_init();
     //balance_init();
 #endif
 
@@ -56,6 +57,7 @@ void RobotTask()
 
 #if defined(ONE_BOARD) || defined(CHASSIS_BOARD)
     ChassisTask();
+    chassis_power_control();
 #endif
 
 }

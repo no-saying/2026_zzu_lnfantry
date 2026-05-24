@@ -1,5 +1,6 @@
 ## 舵机的使用
 
+<p align = 'left' >panrui@hnu.edu.cn</p>
 
 > todo: 角度设置等需要规范化
 

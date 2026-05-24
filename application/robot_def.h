@@ -16,19 +16,19 @@
 #include "stdint.h"
 
 /* 开发板类型定义,烧录时注意不要弄错对应功能;修改定义后需要重新编译,只能存在一个定义! */
-// #define ONE_BOARD // 单板控制整车
-//#define CHASSIS_BOARD //底盘板
-#define GIMBAL_BOARD // 云台板
-
+//#define ONE_BOARD // 单板控制整车
+#define CHASSIS_BOARD //底盘板
+//#define GIMBAL_BOARD // 云台板
+//ENABLE_ROLL_90_ROTATION
 // #define VISION_USE_VCP // 使用虚拟串口发送视觉数据
 #define VISION_USE_UART // 使用串口发送视觉数据
 
 /* 机器人重要参数定义,注意根据不同机器人进行修改,浮点数需要以.0或f结尾,无符号以u结尾 */
 // 云台参数
-#define YAW_CHASSIS_ALIGN_ECD 6841 // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
+#define YAW_CHASSIS_ALIGN_ECD 6884 // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
 #define YAW_ECD_GREATER_THAN_4096 1 // ALIGN_ECD值是否大于4096,是为1,否为0;用于计算云台偏转角度
 #define PITCH_HORIZON_ECD 3412      // 云台处于水平位置时编码器值,若对云台有机械改动需要修改
-#define PITCH_MAX_ANGLE 30           // 云台竖直方向最大角度 (注意反馈如果是陀螺仪，则填写陀螺仪的角度)
+#define PITCH_MAX_ANGLE 9.5           // 云台竖直方向最大角度 (注意反馈如果是陀螺仪，则填写陀螺仪的角度)
 #define PITCH_MIN_ANGLE -30           // 云台竖直方向最小角度 (注意反馈如果是陀螺仪，则填写陀螺仪的角度)
 // 发射参数
 #define ONE_BULLET_DELTA_ANGLE 36    // 发射一发弹丸拨盘转动的距离,由机械设计图纸给出
@@ -88,7 +88,19 @@ typedef enum
     CHASSIS_NO_FOLLOW,         // 不跟随，允许全向平移  //普通模式
     CHASSIS_FOLLOW_GIMBAL_YAW, // 跟随模式，底盘叠加角度环控制
 } chassis_mode_e;
+typedef enum
+{
+    CHASSIS_HANGOFF, //悬挂关闭
+    CHASSIS_HANG, // 悬挂开启模式
+    CHASSIS_JUMP, // 跳跃模式
+}chassis_mode_leg;
 
+typedef enum
+{
+    peek_none,
+    peek_left,
+    peek_right,
+}chassis_peek_mode;
 // 云台模式设置
 typedef enum
 {
@@ -133,6 +145,11 @@ typedef struct
     float motor_current_up[HUBS_NUMBER]; // 电机电流正上限
     float motor_current_down[HUBS_NUMBER]; // 电机电流负上限
 } Chassis_Power_Data_s;
+
+typedef struct
+{ // 功率控制
+    int8_t motor[4];
+} Chassis_Temp_Data_s;
 typedef struct 
 {
     float spd;
@@ -213,6 +230,10 @@ typedef struct
     // float wz;           // 旋转速度     w
     // float offset_angle; // 底盘和归中位置的夹角
     chassis_mode_e chassis_mode;
+    uint8_t supercap_enable;
+    uint8_t ui_init_enable;
+    friction_mode_e friction_mode;
+    chassis_peek_mode peek_mode;
     // uint16_t chassis_power_limit; // 底盘功率限制,单位W
     // // UI部分
     // //  ...
@@ -220,7 +241,13 @@ typedef struct
     // int bullet_speed;
     // uint16_t cap_power;
 } Chassis_Ctrl_Cmd_3s;
-
+typedef struct
+{
+    uint8_t reverse_flag;
+    chassis_mode_leg chassis_mode_leg;
+    uint8_t leg_switch;
+    float hang_height;
+} Chassis_Ctrl_Cmd_4s;
 // cmd发布的云台控制数据,由gimbal订阅
 typedef struct
 { // 云台角度控制
@@ -259,6 +286,16 @@ typedef struct
     // 后续增加底盘的真实速度
     // float real_vx;
     // float real_vy;
+    float real_wz;
+    float rest_heat;           // 剩余枪口热量
+    float motor_speed[HUBS_NUMBER]; // 电机速度
+    float motor_current[HUBS_NUMBER]; // 电机电流
+    uint8_t chassis_level;
+    uint16_t chassis_power_limit;
+    uint16_t chassis_power;
+    uint16_t chassis_cap_current;
+    Bullet_Speed_e bullet_speed; // 弹速限制
+    Enemy_Color_e enemy_color;   // 0 for blue, 1 for red
 } Chassis_Upload_Data_s;
 
 typedef struct
@@ -285,7 +322,7 @@ typedef struct
     uint8_t SuperCapReady;
     uint16_t ChassisPower;
     float chassis_power_mx;
-    uint16_t buffer_energy;
+    uint8_t buffer_energy;
     /* data */
 }Chassis_Upload_CAP_s;
 

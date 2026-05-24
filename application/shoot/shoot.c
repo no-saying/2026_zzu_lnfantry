@@ -49,7 +49,7 @@ void ShootInit()
             },
             .current_PID = { 
                 .Kp = 1.1, // 0.7
-                .Ki = 0, // 0.1
+                .Ki = 0.01, // 0.1
                 .Kd = 0,
                 .Improve = PID_Integral_Limit,
                 .IntegralLimit = 10000,
@@ -91,7 +91,8 @@ void ShootInit()
                 .Kp = 10, // 10
                 .Ki = 0, // 1
                 .Kd = 0,
-                .Improve = PID_Integral_Limit | PID_ErrorHandle,
+                .Output_LPF_RC =0.5,
+                .Improve = PID_Integral_Limit | PID_ErrorHandle |PID_OutputFilter,
                 .IntegralLimit = 5000,
                 .MaxOut = 7000,
                 .MaxOut_ = -7000
@@ -187,6 +188,7 @@ void ShootTask()
         // 也有可能需要从switch-case中独立出来
         case LOAD_REVERSE:
             DJIMotorOuterLoop(loader, SPEED_LOOP);
+            DJIMotorSetRef(loader, -shoot_cmd_recv.shoot_rate * 360 * REDUCTION_RATIO_LOADER / 8);
             // ...
             break;
         default:

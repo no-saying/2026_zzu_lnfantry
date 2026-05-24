@@ -18,10 +18,11 @@
 #include "stdint.h"
 #include "BMI088driver.h"
 #include "QuaternionEKF.h"
-
 #define X 0
 #define Y 1
 #define Z 2
+
+#define ENABLE_ROLL_90_ROTATION
 
 #define INS_TASK_PERIOD 1
 

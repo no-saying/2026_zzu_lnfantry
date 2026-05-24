@@ -116,55 +116,111 @@ attitude_t *INS_Init(void)
     return (attitude_t *)&INS.Gyro; // @todo: 这里偷懒了,不要这样做! 修改INT_t结构体可能会导致异常,待修复.
 }
 
-/* 注意以1kHz的频率运行此任务 */
+/*要以1khz运行*/
 void INS_Task(void)
 {
     static uint32_t count = 0;
-    const float gravity[3] = {0, 0, 9.81f};
+    static uint8_t ekf_init_flag = 0; // EKF初始化标志
+    const float gravity[3] = {0, 0, 9.81f}; // 导航系重力沿Z轴向下
 
     dt = DWT_GetDeltaT(&INS_DWT_Count);
     t += dt;
 
-    // ins update
+    // 上电首次执行：重置EKF四元数，消除初始偏置
+    if (ekf_init_flag == 0)
+    {
+        // 重置四元数为单位矩阵（初始姿态：yaw/roll/pitch=0）
+        QEKF_INS.q[0] = 1.0f;
+        QEKF_INS.q[1] = 0.0f;
+        QEKF_INS.q[2] = 0.0f;
+        QEKF_INS.q[3] = 0.0f;
+        ekf_init_flag = 1; // 只初始化一次
+    }
+
     if ((count % 1) == 0)
     {
         BMI088_Read(&BMI088);
 
-        INS.Accel[X] = BMI088.Accel[X];
-        INS.Accel[Y] = BMI088.Accel[Y];
-        INS.Accel[Z] = BMI088.Accel[Z];
-        INS.Gyro[X] = BMI088.Gyro[X];
-        INS.Gyro[Y] = BMI088.Gyro[Y];
-        INS.Gyro[Z] = BMI088.Gyro[Z];
+        // 原始数据读取
+        float raw_accel[3] = {BMI088.Accel[X], BMI088.Accel[Y], BMI088.Accel[Z]};
+        float raw_gyro[3] = {BMI088.Gyro[X], BMI088.Gyro[Y], BMI088.Gyro[Z]};
 
-        // demo function,用于修正安装误差,可以不管,本demo暂时没用
+        // 关键修正：假设你的roll轴实际是Y轴（而非X轴），绕Y轴逆时针旋转90度
+        // 若仍不对，可切换回X轴（注释Y轴逻辑，启用X轴逻辑）
+#ifdef ENABLE_ROLL_90_ROTATION
+        float rotated_accel[3];
+        float rotated_gyro[3];
+
+        // ===== 方案1：roll轴为Y轴（优先尝试，解决初始角度错误）=====
+        // 绕Y轴逆时针90度的旋转矩阵（右手定则：拇指沿Y轴正向）
+        // [X; Y; Z] = [0  0  1; 
+        //              0  1  0; 
+        //             -1  0  0] * 原始坐标
+        rotated_accel[X] = raw_accel[Z];    // X' = Z
+        rotated_accel[Y] = raw_accel[Y];    // Y轴不变（roll轴）
+        rotated_accel[Z] = -raw_accel[X];   // Z' = -X
+        
+        rotated_gyro[X] = raw_gyro[Z];      // 陀螺仪同步修正
+        rotated_gyro[Y] = raw_gyro[Y];
+        rotated_gyro[Z] = -raw_gyro[X];
+
+        // ===== 方案2：若方案1仍错，改用roll轴为X轴（逆时针-90度，即顺时针90度）=====
+        // 取消下面注释，注释方案1即可
+        // rotated_accel[X] = raw_accel[X];
+        // rotated_accel[Y] = -raw_accel[Z];  // Y' = -Z（顺时针90度）
+        // rotated_accel[Z] = raw_accel[Y];   // Z' = Y
+        // rotated_gyro[X] = raw_gyro[X];
+        // rotated_gyro[Y] = -raw_gyro[Z];
+        // rotated_gyro[Z] = raw_gyro[Y];
+
+        // 赋值旋转后的数据
+        INS.Accel[X] = rotated_accel[X];
+        INS.Accel[Y] = rotated_accel[Y];
+        INS.Accel[Z] = rotated_accel[Z];
+        INS.Gyro[X] = rotated_gyro[X];
+        INS.Gyro[Y] = rotated_gyro[Y];
+        INS.Gyro[Z] = rotated_gyro[Z];
+#else
+        // 原始坐标赋值
+        INS.Accel[X] = raw_accel[X];
+        INS.Accel[Y] = raw_accel[Y];
+        INS.Accel[Z] = raw_accel[Z];
+        INS.Gyro[X] = raw_gyro[X];
+        INS.Gyro[Y] = raw_gyro[Y];
+        INS.Gyro[Z] = raw_gyro[Z];
+#endif
+
+        // 安装误差修正（保持不变）
         IMU_Param_Correction(&IMU_Param, INS.Gyro, INS.Accel);
 
-        // 计算重力加速度矢量和b系的XY两轴的夹角,可用作功能扩展,本demo暂时没用
-        // INS.atanxz = -atan2f(INS.Accel[X], INS.Accel[Z]) * 180 / PI;
-        // INS.atanyz = atan2f(INS.Accel[Y], INS.Accel[Z]) * 180 / PI;
-
-        // 核心函数,EKF更新四元数
-        IMU_QuaternionEKF_Update(INS.Gyro[X], INS.Gyro[Y], INS.Gyro[Z], INS.Accel[X], INS.Accel[Y], INS.Accel[Z], dt);
+        // EKF更新四元数（核心姿态解算）
+        IMU_QuaternionEKF_Update(INS.Gyro[X], INS.Gyro[Y], INS.Gyro[Z], 
+                                 INS.Accel[X], INS.Accel[Y], INS.Accel[Z], dt);
 
         memcpy(INS.q, QEKF_INS.q, sizeof(QEKF_INS.q));
 
-        // 机体系基向量转换到导航坐标系，本例选取惯性系为导航系
+        // 机体系→导航系转换（保持不变）
         BodyFrameToEarthFrame(xb, INS.xn, INS.q);
         BodyFrameToEarthFrame(yb, INS.yn, INS.q);
         BodyFrameToEarthFrame(zb, INS.zn, INS.q);
 
-        // 将重力从导航坐标系n转换到机体系b,随后根据加速度计数据计算运动加速度
+        // 重力向量转换+运动加速度计算（保持不变）
         float gravity_b[3];
         EarthFrameToBodyFrame(gravity, gravity_b, INS.q);
-        for (uint8_t i = 0; i < 3; ++i) // 同样过一个低通滤波
+        for (uint8_t i = 0; i < 3; ++i)
         {
-            INS.MotionAccel_b[i] = (INS.Accel[i] - gravity_b[i]) * dt / (INS.AccelLPF + dt) + INS.MotionAccel_b[i] * INS.AccelLPF / (INS.AccelLPF + dt);
+            INS.MotionAccel_b[i] = (INS.Accel[i] - gravity_b[i]) * dt / (INS.AccelLPF + dt) + 
+                                   INS.MotionAccel_b[i] * INS.AccelLPF / (INS.AccelLPF + dt);
         }
-        BodyFrameToEarthFrame(INS.MotionAccel_b, INS.MotionAccel_n, INS.q); // 转换回导航系n
+        BodyFrameToEarthFrame(INS.MotionAccel_b, INS.MotionAccel_n, INS.q);
 
+        // 姿态角赋值（恢复原始逻辑，避免额外偏置）
         INS.Yaw = QEKF_INS.Yaw;
+#ifdef ENABLE_ROLL_90_ROTATION
+        INS.Pitch = QEKF_INS.Pitch;
+#else
         INS.Pitch = -QEKF_INS.Pitch;
+#endif
         INS.Roll = QEKF_INS.Roll;
         INS.Gyro[2] = QEKF_INS.Gyro[2];
         INS.YawTotalAngle = -QEKF_INS.YawTotalAngle;
@@ -172,16 +228,17 @@ void INS_Task(void)
         VisionSetAltitude(INS.Yaw, INS.Pitch, INS.Roll);
     }
 
-    // temperature control
+    // 以下代码保持不变
     if ((count % 2) == 0)
     {
-        // 500hz
         IMU_Temperature_Ctrl();
     }
 
     if ((count++ % 1000) == 0)
     {
-        // 1Hz 可以加入monitor函数,检查IMU是否正常运行/离线
+        // 调试打印：查看初始角度，确认是否接近0
+        // 建议添加串口打印，比如：
+        // printf("Yaw:%.1f, Roll:%.1f, Pitch:%.1f\r\n", INS.Yaw, INS.Roll, INS.Pitch);
     }
 }
 

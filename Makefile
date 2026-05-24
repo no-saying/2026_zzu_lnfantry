@@ -147,9 +147,11 @@ application/chassis/chassis.c \
 application/shoot/shoot.c \
 application/cmd/robot_cmd.c \
 application/robot.c \
-application/chassis/chassis_power_control_with_supercap.c \
+application/chassis/chassis_power_control.c \
 modules/super_cap/CAN_supercap_communication.c \
-Core/Src/i2c.c
+Core/Src/i2c.c \
+modules/power_switch/power_switch.c \
+modules/optical_flow/mtf01.c \
 
 # ASM sources
 ASM_SOURCES =  \
@@ -261,6 +263,8 @@ C_INCLUDES =  \
 -Imodules/daemon \
 -Imodules/alarm \
 -Imodules/buffer \
+-Imodules/power_switch \
+-Imodules/optical_flow \
 -Imodules \
 -IMiddlewares/ST/ARM/DSP/Inc \
 -IMiddlewares/ST/ARM/DSP/Include/dsp \

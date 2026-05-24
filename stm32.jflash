@@ -1,9 +1,9 @@
-  AppVersion = 81004
+  AppVersion = 92800
   FileVersion = 2
 [GENERAL]
   aATEModuleSel[24] = 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
   ConnectMode = 0
-  CurrentFile = "build\Basic_Framework_MC02.hex"
+  CurrentFile = "H:\rm_final_series\bubin\666\basic_framework_mc02-master--\basic_framework_mc02-master--\build\Basic_Framework_MC02.hex"
   DataFileSAddr = 0x00000000
   GUIMode = 0
   HostName = ""
@@ -51,7 +51,6 @@
   BankName = "External QSPI flash"
   BaseAddr = 0x90000000
   Disabled = 1
-  LoaderName = "CLK@PF10_nCS@PG6_D0@PD11_D1@PD12_D2@PE2_D3@PD13_D4@NA_D5@NA_D6@NA_D7@NA"
 [PRODUCTION]
   AutoPerformsDisconnect = 0
   AutoPerformsErase = 1

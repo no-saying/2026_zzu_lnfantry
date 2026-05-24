@@ -28,10 +28,10 @@ void GimbalInit()
         },
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = 40, // 8
+                .Kp = 44, // 8
                 .Ki = 0,
                 .Kd = 4,
-                .DeadBand = 0.05, 
+                .DeadBand = 0.05,//0.05, 
                 .Derivative_LPF_RC = 0.003,
                 .Output_LPF_RC = 0.02,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
@@ -43,11 +43,12 @@ void GimbalInit()
                 .Kp = 78, // 50
                 .Ki = 200, // 200
                 .Kd = 70,
+                .DeadBand = 1,
                 .Output_LPF_RC = 0.005,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement | PID_OutputFilter,
                 .IntegralLimit = 3000,
-                .MaxOut = 30000,
-                .MaxOut_ = -30000
+                .MaxOut = 20000,
+                .MaxOut_ = -20000
             },
             .other_angle_feedback_ptr = &gimba_IMU_data->YawTotalAngle,
             .other_speed_feedback_ptr = &gimba_IMU_data->Gyro[2], //&rotate_compensator,
@@ -59,7 +60,8 @@ void GimbalInit()
             .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = ANGLE_LOOP | SPEED_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
-            .feedforward_flag = SPEED_FEEDFORWARD,
+            //.feedforward_flag = SPEED_FEEDFORWARD,
+            .feedback_reverse_flag = FEEDBACK_DIRECTION_NORMAL
         },
         .motor_type = GM6020};
     // PITCH
@@ -70,7 +72,7 @@ void GimbalInit()
         },   
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = 40, // 10
+                .Kp = 44, // 10
                 .Ki = 0,
                 .Kd = 0.6,
                 .Derivative_LPF_RC = 0.2,

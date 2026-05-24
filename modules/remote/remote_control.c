@@ -1,4 +1,5 @@
 #include "remote_control.h"
+#include "crtc_remote.h"
 #include "string.h"
 #include "bsp_usart.h"
 #include "memory.h"
@@ -6,16 +7,24 @@
 #include "daemon.h"
 #include "bsp_log.h"
 
-#define REMOTE_CONTROL_FRAME_SIZE 18u // 遥控器接收的buffer大小
+#ifdef USART_VT13
 
+#define REMOTE_CONTROL_FRAME_SIZE 21u
+
+#else
+
+#define REMOTE_CONTROL_FRAME_SIZE 18u
+
+#endif
 // 遥控器数据
 static RC_ctrl_t rc_ctrl[2];     //[0]:当前数据TEMP,[1]:上一次的数据LAST.用于按键持续按下和切换的判断
 static uint8_t rc_init_flag = 0; // 遥控器初始化标志位
 
-
 // 遥控器拥有的串口实例,因为遥控器是单例,所以这里只有一个,就不封装了
 static USARTInstance *rc_usart_instance;
 static DaemonInstance *rc_daemon_instance;
+
+uint8_t sbus_rx_sta = 0;
 
 /**
  * @brief 矫正遥控器摇杆的值,超过660或者小于-660的值都认为是无效值,置0
@@ -35,10 +44,11 @@ static void RectifyRCjoystick()
  */
 static void sbus_to_rc(const uint8_t *sbus_buf)
 {
+#ifdef DBUS // DBUS通信协议
     // 摇杆,直接解算时减去偏置
-    rc_ctrl[TEMP].rc.rocker_r_ = -(((sbus_buf[0] | (sbus_buf[1] << 8)) & 0x07ff) - RC_CH_VALUE_OFFSET);                              //!< Channel 0
-    rc_ctrl[TEMP].rc.rocker_r1 = -((((sbus_buf[1] >> 3) | (sbus_buf[2] << 5)) & 0x07ff) - RC_CH_VALUE_OFFSET);                       //!< Channel 1
-    rc_ctrl[TEMP].rc.rocker_l_ = -((((sbus_buf[2] >> 6) | (sbus_buf[3] << 2) | (sbus_buf[4] << 10)) & 0x07ff) - RC_CH_VALUE_OFFSET); //!< Channel 2
+    rc_ctrl[TEMP].rc.rocker_r_ = ((sbus_buf[0] | (sbus_buf[1] << 8)) & 0x07ff) - RC_CH_VALUE_OFFSET;                              //!< Channel 0
+    rc_ctrl[TEMP].rc.rocker_r1 = (((sbus_buf[1] >> 3) | (sbus_buf[2] << 5)) & 0x07ff) - RC_CH_VALUE_OFFSET;                       //!< Channel 1
+    rc_ctrl[TEMP].rc.rocker_l_ = (((sbus_buf[2] >> 6) | (sbus_buf[3] << 2) | (sbus_buf[4] << 10)) & 0x07ff) - RC_CH_VALUE_OFFSET; //!< Channel 2
     rc_ctrl[TEMP].rc.rocker_l1 = (((sbus_buf[4] >> 1) | (sbus_buf[5] << 7)) & 0x07ff) - RC_CH_VALUE_OFFSET;                       //!< Channel 3
     rc_ctrl[TEMP].rc.dial = ((sbus_buf[16] | (sbus_buf[17] << 8)) & 0x07FF) - RC_CH_VALUE_OFFSET;                                 // 左侧拨轮
     RectifyRCjoystick();
@@ -86,8 +96,162 @@ static void sbus_to_rc(const uint8_t *sbus_buf)
     }
 
     memcpy(&rc_ctrl[LAST], &rc_ctrl[TEMP], sizeof(RC_ctrl_t)); // 保存上一次的数据,用于按键持续按下和切换的判断
-}
+#endif
 
+#ifdef SBUS // SBUS通信协议
+
+    if ((sbus_buf[0] == 0x0F) && sbus_buf[24] == 0x00)
+    {
+        sbus_rx_sta = 1;
+    }
+    else
+    {
+        sbus_rx_sta = 0;
+    }
+
+    if (sbus_rx_sta == 1)
+    {
+        rc_ctrl[TEMP].rc.rocker_r_ = ((sbus_buf[1] | (sbus_buf[2] << 8)) & 0x07ff) - RC_CH_VALUE_OFFSET;                              //!< Channel 0
+        rc_ctrl[TEMP].rc.rocker_r1 = (((sbus_buf[2] >> 3) | (sbus_buf[3] << 5)) & 0x07ff) - RC_CH_VALUE_OFFSET;                       //!< Channel 1
+        rc_ctrl[TEMP].rc.rocker_l1 = (((sbus_buf[3] >> 6) | (sbus_buf[4] << 2) | (sbus_buf[5] << 10)) & 0x07ff) - RC_CH_VALUE_OFFSET; //!< Channel 2
+        rc_ctrl[TEMP].rc.rocker_l_ = (((sbus_buf[5] >> 1) | (sbus_buf[6] << 7)) & 0x07ff) - RC_CH_VALUE_OFFSET;                       //!< Channel 3
+        rc_ctrl[TEMP].rc.a[4] = (((sbus_buf[7] << 4) | (sbus_buf[6] >> 4)) & 0x07ff) - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[5] = ((sbus_buf[9] << 9) | (sbus_buf[8] << 1) | (sbus_buf[7] >> 7)) & 0x07ff - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[6] = ((sbus_buf[10] << 6) | (sbus_buf[9] >> 2)) & 0x07ff - RC_CH_VALUE_OFFSET;  // 右侧上中下
+        rc_ctrl[TEMP].rc.a[7] = ((sbus_buf[11] << 3) | (sbus_buf[10] >> 5)) & 0x07ff - RC_CH_VALUE_OFFSET; // 右侧上下  发单
+        rc_ctrl[TEMP].rc.a[8] = ((sbus_buf[13] << 8) | (sbus_buf[12])) & 0x07ff - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[9] = ((sbus_buf[14] << 5) | (sbus_buf[13] >> 3)) & 0x07ff - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[10] = ((sbus_buf[16] << 10) | (sbus_buf[15] << 2) | (sbus_buf[14] >> 6)) & 0x07ff - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[11] = ((sbus_buf[17] << 7) | (sbus_buf[16] >> 1)) & 0x07ff - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[12] = ((sbus_buf[18] << 4) | (sbus_buf[17] >> 4)) & 0x07ff - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[13] = ((sbus_buf[20] << 9) | (sbus_buf[19] << 1) | (sbus_buf[18] >> 7)) & 0x07ff - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[14] = ((sbus_buf[21] << 6) | (sbus_buf[20] >> 2)) & 0x07ff - RC_CH_VALUE_OFFSET;
+        rc_ctrl[TEMP].rc.a[15] = ((sbus_buf[22] << 3) | (sbus_buf[21] >> 5)) & 0x07ff - RC_CH_VALUE_OFFSET;
+        // 右侧三档 SC 上为小陀螺 中为随动 下为普通
+        if (rc_ctrl[TEMP].rc.a[5] > 100 && rc_ctrl[TEMP].rc.a[5] < 500)
+        {
+            rc_ctrl[TEMP].rc.switch_right = 1;
+        }
+        else if (rc_ctrl[TEMP].rc.a[5] < 100 && rc_ctrl[TEMP].rc.a[5] > -100)
+        {
+            rc_ctrl[TEMP].rc.switch_right = 3;
+        }
+        else if (rc_ctrl[TEMP].rc.a[5] > 500)
+        {
+            rc_ctrl[TEMP].rc.switch_right = 2;
+        }
+
+        // 左侧三档 SB
+        if (rc_ctrl[TEMP].rc.a[4] < -100)
+        {
+            rc_ctrl[TEMP].rc.switch_left = 1;
+        }
+        else if (rc_ctrl[TEMP].rc.a[4] < 100 && rc_ctrl[TEMP].rc.a[4] > -100)
+        {
+            rc_ctrl[TEMP].rc.switch_left = 3;
+        }
+        else if (rc_ctrl[TEMP].rc.a[4] > 100)
+        {
+            rc_ctrl[TEMP].rc.switch_left = 2;
+        }
+
+        // 射击 SE
+        if (rc_ctrl[TEMP].rc.a[6] > 500)
+        {
+            rc_ctrl[TEMP].rc.dial = -600;
+        }
+        else if (rc_ctrl[TEMP].rc.a[6] < 100 && rc_ctrl[TEMP].rc.a[6] > -100)
+        {
+            rc_ctrl[TEMP].rc.dial = -300;
+        }
+        else if (rc_ctrl[TEMP].rc.a[6] > 100 && rc_ctrl[TEMP].rc.a[6] < 500)
+        {
+            rc_ctrl[TEMP].rc.dial = -150;
+        }
+    }
+#endif
+#ifdef USART_VT13  //USART_VT13(和sbus差不多)通信协议
+
+    if ((sbus_buf[0] == 0xA9)&&sbus_buf[1]==0x53)
+	{
+        if(verify_crc16_check_sum(sbus_buf,21)==1)
+		    sbus_rx_sta = 1;
+        else
+            sbus_rx_sta = 1;
+	}
+	else
+	{
+		sbus_rx_sta=0;
+	}
+
+	if(sbus_rx_sta==1)
+    {
+        // 使用结构体解析（最简洁可靠）
+        remote_data_t *remote = (remote_data_t *)sbus_buf;
+        // 1. 解析摇杆（注意：11位数据，范围0-2047，减去1024得到-1024~1023）
+        rc_ctrl[TEMP].rc.rocker_r_ = remote->ch_0 - RC_CH_VALUE_OFFSET;   // 右摇杆X
+        rc_ctrl[TEMP].rc.rocker_r1 = remote->ch_1 - RC_CH_VALUE_OFFSET;  // 右摇杆Y
+        rc_ctrl[TEMP].rc.rocker_l_ = remote->ch_2 - RC_CH_VALUE_OFFSET;  // 左摇杆X
+        rc_ctrl[TEMP].rc.rocker_l1 = remote->ch_3 - RC_CH_VALUE_OFFSET;  // 左摇杆Y
+            
+        // 2. 解析开关按钮
+        rc_ctrl[TEMP].rc.switch_m = remote->mode_sw;        // 2位模式开关
+        rc_ctrl[TEMP].rc.button_stop = remote->pause;       // 暂停按钮
+        rc_ctrl[TEMP].rc.button_l = remote->fn_1;           // 左功能键
+        rc_ctrl[TEMP].rc.button_r = remote->fn_2;           // 右功能键
+        rc_ctrl[TEMP].rc.dial = remote->wheel - 1024;       // 滚轮
+        rc_ctrl[TEMP].rc.trigger_cutton = remote->trigger;  // 扳机键
+            
+        // 3. 解析鼠标
+        rc_ctrl[TEMP].mouse.x = remote->mouse_x;            // X轴
+        rc_ctrl[TEMP].mouse.y = remote->mouse_y;            // Y轴
+        rc_ctrl[TEMP].mouse.z = remote->mouse_z;            // Z轴
+        rc_ctrl[TEMP].mouse.press_l = remote->mouse_left;   // 左键
+        rc_ctrl[TEMP].mouse.press_r = remote->mouse_right;  // 右键
+        rc_ctrl[TEMP].mouse.press_m = remote->mouse_middle; // 中键
+            
+        // 4. 解析键盘（直接拷贝16位按键状态）
+        rc_ctrl[TEMP].key[KEY_PRESS].keys = remote->key;
+            
+        // 5. 处理组合键
+        if (rc_ctrl[TEMP].key[KEY_PRESS].ctrl)
+            rc_ctrl[TEMP].key[KEY_PRESS_WITH_CTRL] = rc_ctrl[TEMP].key[KEY_PRESS];
+        else
+            memset(&rc_ctrl[TEMP].key[KEY_PRESS_WITH_CTRL], 0, sizeof(Key_t));
+            
+        if (rc_ctrl[TEMP].key[KEY_PRESS].shift)
+            rc_ctrl[TEMP].key[KEY_PRESS_WITH_SHIFT] = rc_ctrl[TEMP].key[KEY_PRESS];
+        else
+            memset(&rc_ctrl[TEMP].key[KEY_PRESS_WITH_SHIFT], 0, sizeof(Key_t));
+            
+        // 6. 更新按键计数
+        uint16_t key_now = rc_ctrl[TEMP].key[KEY_PRESS].keys;
+        uint16_t key_last = rc_ctrl[LAST].key[KEY_PRESS].keys;
+        uint16_t key_with_ctrl = rc_ctrl[TEMP].key[KEY_PRESS_WITH_CTRL].keys;
+        uint16_t key_with_shift = rc_ctrl[TEMP].key[KEY_PRESS_WITH_SHIFT].keys;
+        uint16_t key_last_with_ctrl = rc_ctrl[LAST].key[KEY_PRESS_WITH_CTRL].keys;
+        uint16_t key_last_with_shift = rc_ctrl[LAST].key[KEY_PRESS_WITH_SHIFT].keys;
+            
+        for (uint16_t i = 0, j = 0x1; i < 16; j <<= 1, i++)
+        {
+            if (i == 4 || i == 5) // ctrl和shift键
+                 continue;
+                
+            if ((key_now & j) && !(key_last & j) && !(key_with_ctrl & j) && !(key_with_shift & j))
+                rc_ctrl[TEMP].key_count[KEY_PRESS][i]++;
+                
+            if ((key_with_ctrl & j) && !(key_last_with_ctrl & j))
+                rc_ctrl[TEMP].key_count[KEY_PRESS_WITH_CTRL][i]++;
+                
+            if ((key_with_shift & j) && !(key_last_with_shift & j))
+                rc_ctrl[TEMP].key_count[KEY_PRESS_WITH_SHIFT][i]++;
+        }
+            
+        // 保存上一次数据
+        memcpy(&rc_ctrl[LAST], &rc_ctrl[TEMP], sizeof(RC_ctrl_t));
+    }
+#endif
+}
 /**
  * @brief 对sbus_to_rc的简单封装,用于注册到bsp_usart的回调函数中
  *

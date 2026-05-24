@@ -208,7 +208,7 @@ float PIDCalculate(PIDInstance *pid, float measure, float ref)
         pid->Output = 0;
         pid->ITerm = 0;
     }
-
+    
     // 保存当前数据,用于下次计算
     pid->Last_Measure = pid->Measure;
     pid->Last_Output = pid->Output;

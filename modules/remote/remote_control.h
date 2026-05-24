@@ -21,6 +21,10 @@
 #define LAST 1
 #define TEMP 0
 
+//需要哪个解开注释即可
+// #define DBUS // DBUS
+//#define SBUS // SBUS
+#define USART_VT13 //USART，图传链路
 // 获取按键操作
 #define KEY_PRESS 0
 #define KEY_STATE 1
@@ -96,16 +100,29 @@ typedef struct
         int16_t rocker_r_; // 右水平
         int16_t rocker_r1; // 右竖直
         int16_t dial;      // 侧边拨轮
-
+        #ifdef USART_VT13
+        uint8_t switch_m;
+        uint8_t button_stop;
+        uint8_t button_l;
+        uint8_t button_r;
+        uint8_t trigger_cutton;
+        #else
+        int16_t a[20];     //用于存放SBUS接收到的数据
         uint8_t switch_left;  // 左侧开关
         uint8_t switch_right; // 右侧开关
+        #endif
     } rc;
+
     struct
     {
         int16_t x;
         int16_t y;
         uint8_t press_l;
         uint8_t press_r;
+        #ifdef USART_VT13
+        int16_t z;
+        uint8_t press_m;
+        #endif
     } mouse;
 
     Key_t key[3]; // 改为位域后的键盘索引,空间减少8倍,速度增加16~倍

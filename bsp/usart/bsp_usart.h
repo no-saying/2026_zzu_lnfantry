@@ -1,10 +1,10 @@
-#ifndef BSP_RC_H
-#define BSP_RC_H
+#ifndef BSP_USART_H
+#define BSP_USART_H
 
 #include <stdint.h>
 #include "main.h"
 
-#define DEVICE_USART_CNT 8     // MC02串口数量8个，其中
+#define DEVICE_USART_CNT 10     // MC02串口数量8个，其中
 #define USART_RXBUFF_LIMIT 256 // 如果协议需要更大的buff,请修改这里
 
 // 模块回调函数,用于解析协议
@@ -23,6 +23,8 @@ typedef enum
 // 由于串口是独占的点对点通信,所以不需要考虑多个module同时使用一个串口的情况,因此不用加入id;当然也可以选择加入,这样在bsp层可以访问到module的其他信息
 typedef struct
 {
+    uint8_t enable_485; 
+    uint8_t id;                            // 485总线用
     uint8_t recv_buff[USART_RXBUFF_LIMIT]; // 预先定义的最大buff大小,如果太小请修改USART_RXBUFF_LIMIT
     uint8_t recv_buff_size;                // 模块接收一包数据的大小
     UART_HandleTypeDef *usart_handle;      // 实例对应的usart_handle
@@ -32,11 +34,12 @@ typedef struct
 /* usart 初始化配置结构体 */
 typedef struct
 {
+    uint8_t enable_485;
+    uint8_t id;                            // 485总线用
     uint8_t recv_buff_size;                // 模块接收一包数据的大小
     UART_HandleTypeDef *usart_handle;      // 实例对应的usart_handle
     usart_module_callback module_callback; // 解析收到的数据的回调函数
 } USART_Init_Config_s;
-
 /**
  * @brief 注册一个串口实例,返回一个串口实例指针
  *
@@ -72,4 +75,5 @@ void USARTSend(USARTInstance *_instance, uint8_t *send_buf, uint16_t send_size,U
  */
 uint8_t USARTIsReady(USARTInstance *_instance);
 
+HAL_StatusTypeDef USART_H7_SetBaudRateOnly(UART_HandleTypeDef *huart, uint32_t new_baud);
 #endif

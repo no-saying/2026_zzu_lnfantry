@@ -29,23 +29,14 @@ typedef struct
 	ext_game_result_t GameResult;						   // 0x0002
 	ext_game_robot_HP_t GameRobotHP;					   // 0x0003
 	ext_event_data_t EventData;							   // 0x0101
-	//ext_supply_projectile_action_t SupplyProjectileAction; // 0x0102
-	ext_referee_warning_t RefereeWarning;                  // 0x0104 新增 裁判警告数据
-    ext_dart_info_t DartInfo;                              // 0x0105 新增 飞镖发射相关数据
+	ext_supply_projectile_action_t SupplyProjectileAction; // 0x0102
 	ext_game_robot_state_t GameRobotState;				   // 0x0201
 	ext_power_heat_data_t PowerHeatData;				   // 0x0202
 	ext_game_robot_pos_t GameRobotPos;					   // 0x0203
-	ext_buff_t Buff;							   		   // 0x0204
+	ext_buff_musk_t BuffMusk;							   // 0x0204
 	aerial_robot_energy_t AerialRobotEnergy;			   // 0x0205
 	ext_robot_hurt_t RobotHurt;							   // 0x0206
 	ext_shoot_data_t ShootData;							   // 0x0207
-	ext_projectile_allowance_t ProjectileAllowance;		   // 0x208  新增 允许发弹量
-    ext_rfid_status_t RfidStatus;                          // 0x0209 新增 机器人 RFID 模块状态
-    ext_dart_client_cmd_t DartClientCmd;                   // 0x020A 新增 飞镖选手端指令数据
-    ext_ground_robot_position_t GroundRobotPosition;       // 0x020B 新增
-    ext_radar_mark_progress_t RadarMarkProgress;           // 0x020C 新增
-    ext_sentry_info_t SentryInfo;                          // 0x020D 新增
-    ext_radar_info_t RadarInfo;                            // 0x020E 新增
 
 	// 自定义交互数据的接收
 	Communicate_ReceiveData_t ReceiveData;
@@ -64,8 +55,12 @@ typedef struct
 	uint32_t friction_flag : 1;
 	uint32_t Power_flag : 1;
 	uint32_t bullet_speed_flag : 1;
+	uint32_t super_cap_flag : 1;
+	uint32_t leg_flag;
+	uint32_t wheel_flag;
 } Referee_Interactive_Flag_t;
 
+// 此结构体包含UI绘制与机器人车间通信的需要的其他非裁判系统数据
 // 此结构体包含UI绘制与机器人车间通信的需要的其他非裁判系统数据
 typedef struct
 {
@@ -77,8 +72,16 @@ typedef struct
 	friction_mode_e friction_mode;			 // 摩擦轮关闭
 	lid_mode_e lid_mode;					 // 弹舱盖打开
 	Chassis_Power_Data_s Chassis_Power_Data; // 功率控制
+	uint8_t enable_super_cap;
+	uint8_t switch_flag;
+	float height;
 	int bullet_speed;
-
+	int  super_cap_mode;
+	Chassis_Upload_CAP_s super_cap;
+	Chassis_Temp_Data_s leg_motor;
+	chassis_mode_leg leg_mode;
+	chassis_peek_mode peek_mode;
+	uint8_t reverse_flag;
 	// 上一次的模式，用于flag判断
 	chassis_mode_e chassis_last_mode;
 	gimbal_mode_e gimbal_last_mode;
@@ -86,9 +89,16 @@ typedef struct
 	friction_mode_e friction_last_mode;
 	lid_mode_e lid_last_mode;
 	Chassis_Power_Data_s Chassis_last_Power_Data;
+	uint8_t last_enable_super_cap;
+	uint8_t last_switch_flag;
+	float last_height;
 	int last_bullet_speed;
-
-
+	int  super_cap_last_mode;
+	Chassis_Upload_CAP_s last_super_cap;
+	Chassis_Temp_Data_s last_leg_motor;
+	chassis_mode_leg leg_last_mode;
+	chassis_peek_mode last_peek_mode;
+	uint8_t last_reverse_flag;
 } Referee_Interactive_info_t;
 
 #pragma pack()
