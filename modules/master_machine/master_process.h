@@ -100,11 +100,10 @@ typedef struct
  * @param handle 用于和视觉通信的串口handle(C板上一般为USART1,丝印为USART2,4pin)
  */
 Vision_Recv_s *VisionInit(void);
-/**
- * @brief 发送视觉数据
- *
- */
-void VisionSend();
+void VisionSend(void);
+
+Vision_Send_s *VisionGetSendData(void);
+Vision_Recv_s *VisionGetRecvData(void);
 
 /**
  * @brief 设置视觉发送标志位

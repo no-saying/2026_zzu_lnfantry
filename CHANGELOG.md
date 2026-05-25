@@ -1,5 +1,21 @@
 # 更新日志
 
+## 2026-05-26 — vision 通信统一 + 原生构建
+
+### 修改
+- **vision 通信统一**: `MICRO_ROS_ENABLED` 时 vision 数据完全走 ROS 2 topic，禁用 raw seasky 协议；未启用时回退到 seasky 串口
+- **双 topic 模型**:
+  - `/stm32h723/vision_send` — 下位机→上位机 (JSON: enemy_color, work_mode, bullet_speed, yaw, pitch, roll)
+  - `/stm32h723/vision_recv` — 上位机→下位机 (JSON: fire_mode, target_state, target_type, yaw, pitch, fire_tem)
+- **`freertos.c`**: 新增 vision subscriber + JSON 解析回调，publisher 改为 `microros_publish_vision()`
+- **`master_process.c`**: seasky 协议用 `#if !defined(MICRO_ROS_ENABLED)` 守卫；新增 `VisionGetSendData()` / `VisionGetRecvData()` accessor
+- **`robot_cmd.c`**: `MICRO_ROS_ENABLED` 时调用 `microros_publish_vision()`，否则 `VisionSend()`
+- **`library_generation.sh`**: 适配 ELF 原生构建（自动检测工具链/workspace，无需 Docker）
+
+### 新增
+- **原生 libmicroros.a 构建**: 安装 `ros-humble-micro-ros-setup` + 本机工具链后直接 `bash library_generation.sh`
+- **`MICROROS_GUIDE.md`**: 更新架构图、topic 表、切换说明、原生构建文档
+
 ## 2026-05-26 — micro-ROS 集成与 RAM 优化
 
 ### 新增

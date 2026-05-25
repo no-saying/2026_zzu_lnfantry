@@ -6,6 +6,9 @@
 #include "ins_task.h"
 #include "master_process.h"
 #include "message_center.h"
+#ifdef MICRO_ROS_ENABLED
+#include "microros_transport.h"
+#endif
 #include "general_def.h"
 #include "dji_motor.h"
 #include "buffer.h"
@@ -466,5 +469,12 @@ void RobotCMDTask()
     // 发送给其他应用的控制消息
     PubPushMessage(shoot_cmd_pub, (void *)&shoot_cmd_send);
     PubPushMessage(gimbal_cmd_pub, (void *)&gimbal_cmd_send);
+#ifdef MICRO_ROS_ENABLED
+    VisionSetAltitude(gimbal_fetch_data.gimbal_imu_data.YawTotalAngle,
+                      gimbal_fetch_data.gimbal_imu_data.Pitch,
+                      gimbal_fetch_data.gimbal_imu_data.Roll);
+    microros_publish_vision();
+#else
     VisionSend();
+#endif
 }

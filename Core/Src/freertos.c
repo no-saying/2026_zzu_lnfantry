@@ -183,18 +183,47 @@ void StartDefaultTask(void const * argument)
 
 #ifdef MICRO_ROS_ENABLED
 
+#include "master_process.h"
+#include <stdio.h>
+#include <string.h>
+
 static rcl_allocator_t microros_allocator;
 static rclc_support_t microros_support;
 static rcl_node_t microros_node;
-static rcl_publisher_t microros_publisher;
+static rcl_publisher_t microros_pub_send;
+static rcl_subscription_t microros_sub_recv;
 static rclc_executor_t microros_executor;
-static std_msgs__msg__String microros_msg;
+static std_msgs__msg__String microros_send_msg;
+static std_msgs__msg__String microros_recv_msg;
+
+/* ──── vision receive callback (called by executor when agent forwards data) ──── */
+static void microros_vision_recv_cb(const void *msgin)
+{
+    const std_msgs__msg__String *in = (const std_msgs__msg__String *)msgin;
+    if (in == NULL || in->data.data == NULL || in->data.size == 0) return;
+
+    Vision_Recv_s *recv = VisionGetRecvData();
+
+    /* parse JSON: {"fire_mode":N,"target_state":N,"target_type":N,"yaw":F,"pitch":F,"fire_tem":N} */
+    char buf[256];
+    size_t n = in->data.size < sizeof(buf) - 1 ? in->data.size : sizeof(buf) - 1;
+    memcpy(buf, in->data.data, n);
+    buf[n] = '\0';
+
+    sscanf(buf, "{\"fire_mode\":%d,\"target_state\":%d,\"target_type\":%d,\"yaw\":%f,\"pitch\":%f,\"fire_tem\":%hhu}",
+           (int *)&recv->fire_mode,
+           (int *)&recv->target_state,
+           (int *)&recv->target_type,
+           &recv->yaw,
+           &recv->pitch,
+           &recv->fire_tem);
+}
 
 void StartMicrorosTask(void const *argument)
 {
     (void)argument;
 
-    /* 1. register custom transport (micro-ROS calls open/close during init) */
+    /* 1. register custom transport */
     rmw_uros_set_custom_transport(
         false, NULL,
         microros_transport_open,
@@ -211,21 +240,33 @@ void StartMicrorosTask(void const *argument)
     }
     rclc_node_init_default(&microros_node, "stm32h723_node", "", &microros_support);
 
-    /* 3. create publisher */
+    /* 3. publisher: STM32 → vision computer (gimbal attitude + flags) */
     rclc_publisher_init_default(
-        &microros_publisher,
+        &microros_pub_send,
         &microros_node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
-        "stm32h723/vision_data"
+        "stm32h723/vision_send"
     );
 
-    /* 4. executor (no timer, publish on-demand from application code) */
-    rclc_executor_init(&microros_executor, &microros_support.context, 1, &microros_allocator);
+    /* 4. subscriber: vision computer → STM32 (target info + fire) */
+    rclc_subscription_init_default(
+        &microros_sub_recv,
+        &microros_node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
+        "stm32h723/vision_recv"
+    );
 
-    /* 5. init message */
-    microros_msg.data.data = NULL;
-    microros_msg.data.size = 0;
-    microros_msg.data.capacity = 0;
+    /* 5. executor — handles subscription callbacks */
+    rclc_executor_init(&microros_executor, &microros_support.context, 2, &microros_allocator);
+    rclc_executor_add_subscription(
+        &microros_executor, &microros_sub_recv, &microros_recv_msg,
+        microros_vision_recv_cb, ON_NEW_DATA
+    );
+
+    /* 6. pre-allocate send message */
+    microros_send_msg.data.data = (char *)malloc(256);
+    microros_send_msg.data.size = 0;
+    microros_send_msg.data.capacity = 256;
 
     for (;;) {
         rclc_executor_spin_some(&microros_executor, RCL_MS_TO_NS(5));
@@ -233,21 +274,20 @@ void StartMicrorosTask(void const *argument)
     }
 }
 
-/* called by application code to publish data to vision computer */
-rcl_ret_t microros_publish_string(const char *data)
+/* publish gimbal attitude + flags to vision computer (JSON over std_msgs/String) */
+rcl_ret_t microros_publish_vision(void)
 {
-    if (microros_msg.data.data != NULL) {
-        free(microros_msg.data.data);
-    }
+    Vision_Send_s *send = VisionGetSendData();
+    if (microros_send_msg.data.data == NULL) return RCL_RET_ERROR;
 
-    size_t len = strlen(data);
-    microros_msg.data.data = (char *)malloc(len + 1);
-    if (microros_msg.data.data == NULL) return RCL_RET_ERROR;
-    memcpy(microros_msg.data.data, data, len + 1);
-    microros_msg.data.size = len;
-    microros_msg.data.capacity = len + 1;
+    int n = snprintf(microros_send_msg.data.data, microros_send_msg.data.capacity,
+        "{\"enemy_color\":%d,\"work_mode\":%d,\"bullet_speed\":%d,\"yaw\":%.2f,\"pitch\":%.2f,\"roll\":%.2f}",
+        send->enemy_color, send->work_mode, send->bullet_speed,
+        send->yaw, send->pitch, send->roll);
+    if (n < 0) return RCL_RET_ERROR;
+    microros_send_msg.data.size = n;
 
-    return rcl_publish(&microros_publisher, &microros_msg, NULL);
+    return rcl_publish(&microros_pub_send, &microros_send_msg, NULL);
 }
 
 #else /* MICRO_ROS_ENABLED not defined — stub task */

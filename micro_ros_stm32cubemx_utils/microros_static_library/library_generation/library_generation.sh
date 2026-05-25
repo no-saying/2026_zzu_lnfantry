@@ -1,24 +1,59 @@
 #!/bin/bash
 set -e
 
-export BASE_PATH=/project/$MICROROS_LIBRARY_FOLDER
+######## Detect paths ########
+
+# Project root: auto-detect from script location or use env var
+if [ -n "$PROJECT_ROOT" ]; then
+    PROJECT_ROOT="$PROJECT_ROOT"
+else
+    PROJECT_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
+fi
+
+export BASE_PATH=$PROJECT_ROOT/micro_ros_stm32cubemx_utils/microros_static_library
+
+# Firmware workspace
+MICROROS_FW_WS=${MICROROS_FW_WS:-$HOME/microros_firmware_ws}
 
 ######## Init ########
 
-# Use host toolchain if mounted; otherwise install from apt
-if [ -d "/host_toolchain/bin" ]; then
+# Toolchain: use env var, or auto-detect common paths
+if [ -n "$TOOLCHAIN_PREFIX" ]; then
+    echo "Using toolchain: $TOOLCHAIN_PREFIX"
+elif [ -d "/host_toolchain/bin" ]; then
     echo "Using host toolchain from /host_toolchain"
+    export TOOLCHAIN_PREFIX=/host_toolchain/bin/arm-none-eabi-
+elif TOOLCHAIN_BIN=$(dirname $(which arm-none-eabi-gcc 2>/dev/null) 2>/dev/null) && [ -n "$TOOLCHAIN_BIN" ]; then
+    echo "Using system toolchain: $TOOLCHAIN_BIN"
+    export TOOLCHAIN_PREFIX=$TOOLCHAIN_BIN/arm-none-eabi-
 else
-    apt update
-    apt install -y gcc-arm-none-eabi
+    echo "No ARM toolchain found! Set TOOLCHAIN_PREFIX or install arm-none-eabi-gcc"
+    exit 1
 fi
 
-cd /uros_ws
-
 source /opt/ros/$ROS_DISTRO/setup.bash
-source install/local_setup.bash
 
-ros2 run micro_ros_setup create_firmware_ws.sh generate_lib
+# Source micro_ros_setup workspace
+MICROROS_SETUP_WS=${MICROROS_SETUP_WS:-$HOME/microros_ws}
+if [ -f "$MICROROS_SETUP_WS/install/setup.bash" ]; then
+    source $MICROROS_SETUP_WS/install/setup.bash
+else
+    echo "micro_ros_setup not found at $MICROROS_SETUP_WS. Install it first."
+    exit 1
+fi
+
+# Create firmware workspace if not exists
+if [ ! -f "$MICROROS_FW_WS/install/local_setup.bash" ]; then
+    echo "Creating firmware workspace at $MICROROS_FW_WS ..."
+    mkdir -p $MICROROS_FW_WS
+    cd $MICROROS_FW_WS
+    ros2 run micro_ros_setup create_firmware_ws.sh generate_lib
+else
+    echo "Using existing firmware workspace at $MICROROS_FW_WS"
+    cd $MICROROS_FW_WS
+fi
+
+source install/local_setup.bash
 
 ######## Adding extra packages ########
 pushd firmware/mcu_ws > /dev/null
@@ -45,7 +80,7 @@ pushd firmware/mcu_ws > /dev/null
 popd > /dev/null
 
 ######## Trying to retrieve CFLAGS ########
-pushd /project > /dev/null
+pushd $PROJECT_ROOT > /dev/null
 export RET_CFLAGS=$(make print_cflags)
 RET_CODE=$?
 
@@ -62,11 +97,6 @@ fi
 popd > /dev/null
 
 ######## Build  ########
-if [ -d "/host_toolchain/bin" ]; then
-    export TOOLCHAIN_PREFIX=/host_toolchain/bin/arm-none-eabi-
-else
-    export TOOLCHAIN_PREFIX=/usr/bin/arm-none-eabi-
-fi
 ros2 run micro_ros_setup build_firmware.sh $BASE_PATH/library_generation/toolchain.cmake $BASE_PATH/library_generation/colcon.meta
 
 find firmware/build/include/ -name "*.c"  -delete
@@ -96,6 +126,6 @@ echo "" > $BASE_PATH/libmicroros/built_packages
 for f in $(find $(pwd) -name .git -type d); do pushd $f > /dev/null; echo $(git config --get remote.origin.url) $(git rev-parse HEAD) >> $BASE_PATH/libmicroros/built_packages; popd > /dev/null; done;
 
 ######## Fix permissions ########
-sudo chmod -R 777 $BASE_PATH/libmicroros/
-sudo chmod -R 777 $BASE_PATH/libmicroros/microros_include/
-sudo chmod -R 777 $BASE_PATH/libmicroros/libmicroros.a
+chmod -R 755 $BASE_PATH/libmicroros/
+chmod -R 755 $BASE_PATH/libmicroros/microros_include/
+chmod 644 $BASE_PATH/libmicroros/libmicroros.a

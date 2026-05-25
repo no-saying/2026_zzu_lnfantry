@@ -2,33 +2,43 @@
 
 ## 架构总览
 
+### micro-ROS 模式 (`MICRO_ROS_ENABLED`)
+
 ```
 ┌─────────────────────────────┐      XRCE-DDS (serial)      ┌──────────────────────┐
 │  STM32H723VGTx (下位机)      │ ──────────────────────────→  │  Ubuntu PC (上位机)    │
 │                             │   USB VCP or USART10 DMA     │                      │
 │  ┌───────────────────────┐  │                              │  micro_ros_agent     │
-│  │  StartMicrorosTask    │  │                              │  (serial → UDP)      │
-│  │  - node: stm32h723_node│  │                              │           ↓          │
-│  │  - publisher:          │  │                              │  ROS 2 Humble        │
-│  │    stm32h723/vision_data│ │                              │  $ ros2 topic echo   │
-│  │  - transport:          │  │                              │                      │
-│  │    VCP / UART callback │  │                              │                      │
+│  │  StartMicrorosTask    │  │   pub: stm32h723/vision_send │  (serial → UDP)      │
+│  │  node: stm32h723_node │  │ ──────────────────────────→ │           ↓          │
+│  │                       │  │   sub: stm32h723/vision_recv │  ROS 2 Humble        │
+│  │                       │  │ ←────────────────────────── │  vision_computer node│
 │  └───────────────────────┘  │                              │                      │
-│                             │                              │                      │
-│  调用方:                     │                              │                      │
-│  microros_publish_string()   │                              │                      │
-│  (任意 task 均可调用)         │                              │                      │
+│  调用方: RobotCMDTask        │                              │                      │
+│  microros_publish_vision()   │                              │                      │
 └─────────────────────────────┘                              └──────────────────────┘
 ```
 
-## 通信介质选择
+### 原始串口模式 (未定义 `MICRO_ROS_ENABLED`)
 
-在 `Makefile` 的 `C_DEFS` 中切换（二选一）：
+```
+┌─────────────────────────────┐   Seasky 协议 (raw serial)   ┌──────────────────────┐
+│  STM32H723VGTx (下位机)      │ ──────────────────────────→  │  视觉上位机            │
+│                             │   USB VCP or USART1           │                      │
+│  VisionSend() / VisionInit()│   cmd_id=0x02, float ypr      │  接收 yaw/pitch/roll  │
+│                             │ ←──────────────────────────  │  发送 目标信息+开火    │
+└─────────────────────────────┘                              └──────────────────────┘
+```
 
-| 宏定义 | 物理接口 | 共享方式 |
-|--------|---------|---------|
-| `-DCOMM_USE_VCP` **(当前)** | USB CDC 虚拟串口 (CN5) | vision + micro-ROS 共用 USB，通过多回调机制分流 |
-| 不定义 `COMM_USE_VCP` | USART10 DMA | vision + micro-ROS 共用 USART10 |
+## 通信模式切换
+
+在 `Makefile` 的 `C_DEFS` 中控制：
+
+| 宏定义 | 作用 | 说明 |
+|--------|------|------|
+| `-DCOMM_USE_VCP` | USB 虚拟串口 | 与 `COMM_USE_UART` 二选一 |
+| `-DMICRO_ROS_ENABLED` | 启用 micro-ROS | vision 数据走 ROS 2 topic |
+| 取消 `MICRO_ROS_ENABLED` | 回退原始串口 | vision 数据走 seasky 协议 |
 
 切换后需 `make clean && make` 重新编译。
 
@@ -47,12 +57,40 @@ make clean && make -j$(nproc)
 
 ### libmicroros.a 重新构建 (仅当需要更新 micro-ROS 包时)
 
+#### 方式一: 原生构建 (推荐，无需 Docker)
+
+环境要求: ROS 2 Humble、micro_ros_setup、arm-gnu-toolchain-14.3
+
+```bash
+cd micro_ros_stm32cubemx_utils/microros_static_library/library_generation
+
+# 直接运行 (脚本自动检测工具链和 workspace)
+bash library_generation.sh
+
+# 产物会自动输出到 libmicroros/ 目录，无需手动复制
+```
+
+脚本会自动:
+- 检测 `arm-none-eabi-gcc` 工具链位置
+- 在 `~/microros_firmware_ws` 创建/复用固件编译工作区
+- 读取 Makefile 的 CFLAGS 确保编译参数一致
+
+可通过环境变量覆盖默认路径:
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PROJECT_ROOT` | 脚本自动定位 | 项目根目录 |
+| `TOOLCHAIN_PREFIX` | `which arm-none-eabi-gcc` 结果 | 工具链前缀 |
+| `MICROROS_FW_WS` | `~/microros_firmware_ws` | 固件工作区路径 |
+| `MICROROS_SETUP_WS` | `~/microros_ws` | micro_ros_setup 工作区 |
+
+#### 方式二: Docker 构建 (备选)
+
 环境要求: Docker、VPN（拉取 GitHub 仓库）
 
 ```bash
 cd micro_ros_stm32cubemx_utils/microros_static_library/library_generation
 
-# 启动 Docker，挂载宿主工具链
 docker run -it --rm \
     -v $(pwd):/project \
     -v /home/yeht/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi:/host_toolchain \
@@ -114,15 +152,22 @@ ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0 -b 115200
 
 ### 3. 验证通信
 
+**查看下位机发送的云台姿态:**
 ```bash
 source /opt/ros/humble/setup.bash
-ros2 topic echo /stm32h723/vision_data
+ros2 topic echo /stm32h723/vision_send
 ```
 
 正常输出示例:
 ```
-data: 'Hello from STM32H723!'
+data: '{"enemy_color":1,"work_mode":0,"bullet_speed":15,"yaw":1.23,"pitch":-0.50,"roll":0.10}'
 ---
+```
+
+**发送自瞄数据到下位机（模拟视觉上位机）:**
+```bash
+ros2 topic pub --once /stm32h723/vision_recv std_msgs/msg/String \
+  '{"data":"{\"fire_mode\":2,\"target_state\":2,\"target_type\":3,\"yaw\":1.57,\"pitch\":-0.30,\"fire_tem\":0}"}'
 ```
 
 ### 4. 查看节点信息
@@ -132,49 +177,63 @@ ros2 node list
 # 应输出: /stm32h723_node
 
 ros2 topic list
-# 应输出: /stm32h723/vision_data
+# 应输出: /stm32h723/vision_send
+#        /stm32h723/vision_recv
 #        /parameter_events
 ```
 
 ## 下位机 API
 
-### 发布数据
+### 发布视觉数据 (micro-ROS 模式)
 
-在任意任务中调用，发送字符串到上位机:
+在 `RobotCMDTask()` 中自动调用，发送云台姿态 + 标志位到上位机:
 
 ```c
-#include "microros_transport.h"
+// RobotCMDTask() 中自动执行:
+VisionSetAltitude(yaw, pitch, roll);
+VisionSetFlag(enemy_color, work_mode, bullet_speed);
+microros_publish_vision();   // → /stm32h723/vision_send
+```
 
-// 示例: 在 vision 任务中发布检测结果
-void VisionTask(void)
-{
-    char buf[256];
-    snprintf(buf, sizeof(buf),
-             "{\"yaw\":%.2f,\"pitch\":%.2f,\"roll\":%.2f}",
-             gimbal.yaw, gimbal.pitch, gimbal.roll);
-    microros_publish_string(buf);
+### 接收视觉自瞄数据 (micro-ROS 模式)
+
+下位机自动从 `/stm32h723/vision_recv` topic 接收，解析后写入 `Vision_Recv_s` 结构体。应用层如原来一样通过 `vision_recv_data` 指针读取:
+
+```c
+Vision_Recv_s *vision_recv_data = VisionInit();
+
+// 在 RobotCMDTask() 中使用:
+if (vision_recv_data->fire_tem == 1) {
+    shoot_cmd_send.load_mode = LOAD_BURSTFIRE;
 }
+gimbal_cmd_send.yaw = -vision_recv_data->yaw;
+gimbal_cmd_send.pitch = vision_recv_data->pitch;
 ```
 
-### 调整 micro-ROS 任务栈
+### 切换回原始串口模式
 
-在 `Core/Src/freertos.c` 中:
-
-```c
-// 栈大小 (words = bytes/4, 当前 2048 = 8KB)
-osThreadDef(microrosTask, StartMicrorosTask, osPriorityAboveNormal, 0, 2048);
-```
-
-> 若运行时出现栈溢出 (stack overflow hook 触发)，增大此值。
+在 Makefile 中删除 `-DMICRO_ROS_ENABLED`，vision 数据自动回退到 seasky 协议，`VisionSend()` 和 seasky 解析恢复工作。
 
 ## Topic 信息
 
-| 属性 | 值 |
-|------|---|
-| Topic 名称 | `/stm32h723/vision_data` |
-| 消息类型 | `std_msgs/msg/String` |
-| 节点名称 | `stm32h723_node` |
-| QoS | 默认 (reliable, volatile, keep_last=10) |
+| 属性 | vision_send (下位机→上位机) | vision_recv (上位机→下位机) |
+|------|--------------------------|--------------------------|
+| Topic 名称 | `/stm32h723/vision_send` | `/stm32h723/vision_recv` |
+| 消息类型 | `std_msgs/msg/String` | `std_msgs/msg/String` |
+| 数据格式 | JSON: enemy_color, work_mode, bullet_speed, yaw, pitch, roll | JSON: fire_mode, target_state, target_type, yaw, pitch, fire_tem |
+| QoS | 默认 | 默认 |
+
+### vision_send JSON 示例
+
+```json
+{"enemy_color":1,"work_mode":0,"bullet_speed":15,"yaw":1.23,"pitch":-0.50,"roll":0.10}
+```
+
+### vision_recv JSON 示例
+
+```json
+{"fire_mode":1,"target_state":2,"target_type":3,"yaw":1.57,"pitch":-0.30,"fire_tem":0}
+```
 
 ## 添加自定义消息类型
 
@@ -226,7 +285,7 @@ void publishRobotState(void)
 | | 串口被占用 | `sudo lsof /dev/ttyACM0` 查找占用进程 |
 | | 下位机 VCP 未初始化 | 检查 USB 线缆连接，确认 `COMM_USE_VCP` 宏已定义 |
 | `ros2 topic echo` 无输出 | publisher 未创建 | 检查 `freertos.c` 中 StartMicrorosTask 是否正常启动 |
-| | 消息未发送 | 调用 `microros_publish_string()` 的代码路径未执行 |
+| | 消息未发送 | `MICRO_ROS_ENABLED` 未定义，或 `microros_publish_vision()` 未执行 |
 | 编译报找不到 micro-ROS 头文件 | 库未构建 | 确认 `lib/libmicroros.a` 存在 |
 | | 头文件路径错误 | 确认 `microros_include/` 指针正确 |
 | 固件溢出 | FreeRTOS 堆过大 | DTCMRAM 段是否生效 (查看 map: `.dtcmram` 应有内容) |
