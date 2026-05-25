@@ -109,6 +109,7 @@ bsp/iic/bsp_iic.c \
 bsp/can/bsp_can.c \
 bsp/usart/bsp_usart.c \
 bsp/log/bsp_log.c \
+bsp/usb/bsp_usb.c \
 bsp/bsp_tools.c \
 modules/algorithm/controller.c \
 modules/algorithm/kalman_filter.c \
@@ -149,7 +150,11 @@ application/cmd/robot_cmd.c \
 application/robot.c \
 application/chassis/chassis_power_control_with_supercap.c \
 modules/super_cap/CAN_supercap_communication.c \
-Core/Src/i2c.c
+Core/Src/i2c.c \
+microros_transport/microros_transport.c \
+micro_ros_stm32cubemx_utils/extra_sources/microros_time.c \
+micro_ros_stm32cubemx_utils/extra_sources/microros_allocators.c \
+micro_ros_stm32cubemx_utils/extra_sources/custom_memory_manager.c
 
 # ASM sources
 ASM_SOURCES =  \
@@ -204,7 +209,9 @@ C_DEFS =  \
 -DUSE_HAL_DRIVER \
 -DSTM32H723xx \
 -DARM_MATH_CM7 \
--DDISABLE_LOG_SYSTEM 
+-DDISABLE_LOG_SYSTEM \
+-DCOMM_USE_VCP \
+-DMICRO_ROS_ENABLED
 
 
 # AS includes
@@ -238,6 +245,7 @@ C_INCLUDES =  \
 -Ibsp/iic \
 -Ibsp/log \
 -Ibsp/pwm \
+-Ibsp/usb \
 -Ibsp \
 -Imodules/algorithm \
 -Imodules/bluetooth \
@@ -265,7 +273,10 @@ C_INCLUDES =  \
 -IMiddlewares/ST/ARM/DSP/Inc \
 -IMiddlewares/ST/ARM/DSP/Include/dsp \
 -IMiddlewares/Third_Party/SEGGER/RTT \
--IMiddlewares/Third_Party/SEGGER/Config
+-IMiddlewares/Third_Party/SEGGER/Config \
+-Imicroros_transport \
+-Imicroros_include \
+-Imicro_ros_stm32cubemx_utils/microros_static_library/libmicroros/microros_include
 
 
 
@@ -282,6 +293,14 @@ endif
 # Generate dependency information
 CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
 
+# GCC 14 compatibility: demote diagnostics that became errors in GCC 14
+CFLAGS += -Wno-error=incompatible-pointer-types \
+          -Wno-error=int-conversion \
+          -Wno-error=implicit-function-declaration
+
+# micro-ROS custom memory manager: use a smaller heap (8 KB) separate from FreeRTOS
+CFLAGS += -DMICROROS_TOTAL_HEAP_SIZE=8192
+
 
 #######################################
 # LDFLAGS
@@ -291,6 +310,7 @@ LDSCRIPT = STM32H723VGTx_FLASH.ld
 
 # libraries
 LIBS = -lc -lm -lnosys -larm_cortexM7lfdp_math
+LIBS += -Wl,--start-group lib/libmicroros.a -Wl,--end-group
 LIBDIR = -LDrivers/CMSIS/DSP/Lib/GCC
 LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections,--print-memory-usage
 
@@ -346,4 +366,12 @@ download_dap:
 	openocd -f openocd_dap.cfg -c init -c halt -c "flash write_image erase $(BUILD_DIR)/$(TARGET).bin 0x08000000" -c reset -c shutdown
 download_jlink:
 	JFlash -openprj'stm32.jflash' -open'$(BUILD_DIR)/$(TARGET).hex',0x8000000 -auto -startapp -exit
+
+-include user_makefile.mk
+
+print_cflags:
+	@echo $(C_DEFS) $(C_INCLUDES) $(CFLAGS)
+
+# *** EOF ***
+
 # *** EOF ***

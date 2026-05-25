@@ -1,0 +1,4 @@
+将 micro-ROS 头文件 (rcl/, rclc/, rmw/, uxr/ 等目录) 复制到此目录下
+
+编译方法: 参考 micro_ros_setup_humble/STM32H723_CubeMX_Makefile_Guide.md
+产物路径: firmware/build/include/

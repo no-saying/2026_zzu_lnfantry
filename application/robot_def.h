@@ -20,8 +20,9 @@
 //#define CHASSIS_BOARD //底盘板
 #define GIMBAL_BOARD // 云台板
 
-// #define VISION_USE_VCP // 使用虚拟串口发送视觉数据
-#define VISION_USE_UART // 使用串口发送视觉数据
+/* 通信介质选择 (实际生效于 Makefile C_DEFS，此处仅作文档说明) */
+// #define COMM_USE_VCP  // USB 虚拟串口 — vision + micro-ROS 共用 USB CDC
+// #define COMM_USE_UART // 硬件串口   — vision + micro-ROS 共用 USART10
 
 /* 机器人重要参数定义,注意根据不同机器人进行修改,浮点数需要以.0或f结尾,无符号以u结尾 */
 // 云台参数

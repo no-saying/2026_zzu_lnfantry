@@ -150,6 +150,14 @@ SECTIONS
   } >RAM AT> FLASH
 
   
+  /* DTCMRAM: place FreeRTOS and micro-ROS heaps in tightly-coupled memory */
+  .dtcmram (NOLOAD) :
+  {
+    . = ALIGN(4);
+    *(.bss.ucHeap)
+    . = ALIGN(4);
+  } >DTCMRAM
+
   /* Uninitialized data section */
   . = ALIGN(4);
   .bss :

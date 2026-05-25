@@ -63,6 +63,8 @@
   * @{
   */
 
+typedef void (*USBCallback)(uint16_t len);
+
 /* USER CODE BEGIN EXPORTED_TYPES */
 
 /* USER CODE END EXPORTED_TYPES */
@@ -106,6 +108,7 @@ extern USBD_CDC_ItfTypeDef USBD_Interface_fops_HS;
   */
 
 uint8_t CDC_Transmit_HS(uint8_t* Buf, uint16_t Len);
+uint8_t *CDCInitRxbufferNcallback(USBCallback tx_cbk, USBCallback rx_cbk);
 
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
 

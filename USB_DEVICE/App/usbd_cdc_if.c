@@ -95,7 +95,10 @@ uint8_t UserRxBufferHS[APP_RX_DATA_SIZE];
 uint8_t UserTxBufferHS[APP_TX_DATA_SIZE];
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
-
+#define CDC_MAX_CB 2
+static USBCallback tx_cbk[CDC_MAX_CB] = {NULL, NULL};
+static USBCallback rx_cbk[CDC_MAX_CB] = {NULL, NULL};
+static int cdc_cb_cnt = 0;
 /* USER CODE END PRIVATE_VARIABLES */
 
 /**
@@ -264,6 +267,11 @@ static int8_t CDC_Control_HS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_HS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 11 */
+  for (int i = 0; i < cdc_cb_cnt; i++) {
+      if (rx_cbk[i] != NULL && *Len > 0) {
+          rx_cbk[i]((uint16_t)*Len);
+      }
+  }
   USBD_CDC_SetRxBuffer(&hUsbDeviceHS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceHS);
   return (USBD_OK);
@@ -308,14 +316,26 @@ static int8_t CDC_TransmitCplt_HS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
   uint8_t result = USBD_OK;
   /* USER CODE BEGIN 14 */
   UNUSED(Buf);
-  UNUSED(Len);
   UNUSED(epnum);
+  for (int i = 0; i < cdc_cb_cnt; i++) {
+      if (tx_cbk[i] != NULL) {
+          tx_cbk[i]((uint16_t)*Len);
+      }
+  }
   /* USER CODE END 14 */
   return result;
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
-
+uint8_t *CDCInitRxbufferNcallback(USBCallback tx, USBCallback rx)
+{
+    if (cdc_cb_cnt < CDC_MAX_CB) {
+        tx_cbk[cdc_cb_cnt] = tx;
+        rx_cbk[cdc_cb_cnt] = rx;
+        cdc_cb_cnt++;
+    }
+    return UserRxBufferHS;
+}
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 
 /**

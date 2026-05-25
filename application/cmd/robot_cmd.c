@@ -57,17 +57,19 @@ static uint8_t flag=1;
 static float aligned_total_yaw, aligned_total_pitch, delayed_total_yaw;
 static float rnm;
 
+#ifndef COMM_USE_VCP
 void syncWithVisionSystem()
 {
     // aligned_total_yaw = BUFUpdata(buffer_yaw, gimbal_fetch_data.gimbal_imu_data.YawTotalAngle, 1);
     // aligned_total_pitch = BUFUpdata(buffer_pitch, gimbal_fetch_data.gimbal_imu_data.Roll, 1);
 }
+#endif
 
 void RobotCMDInit()
 {
     rc_data = RemoteControlInit(&huart5); // 修改为对应串口,注意如果是自研板dbus协议串口需选用添加了反相器的那个
     // nav_recv_data = NavInit(&huart9);
-    vision_recv_data = VisionInit(&huart10, syncWithVisionSystem); // 视觉通信串口
+    vision_recv_data = VisionInit(); // 视觉通信 (VCP 走 USB, UART 走 USART10)
 
     buffer_yaw = BUFRegister();
     buffer_pitch = BUFRegister();
