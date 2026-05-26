@@ -34,17 +34,18 @@ size_t microros_transport_write(struct uxrCustomTransport *transport, const uint
     if (errcode != NULL) *errcode = 0;
     if (len > APP_TX_DATA_SIZE) len = APP_TX_DATA_SIZE;
 
-    int retries = 20;
-    uint8_t ret;
-    while (retries--) {
-        ret = CDC_Transmit_HS((uint8_t *)buf, (uint16_t)len);
-        if (ret == USBD_OK) return len;
-        if (ret == USBD_BUSY) {
-            osDelay(1);
-            continue;
-        }
-        break;
-    }
+    /* try immediate, then retry with 1ms delay (USB FS frame = 1ms, TX completes within 1-2 frames) */
+    uint8_t ret = CDC_Transmit_HS((uint8_t *)buf, (uint16_t)len);
+    if (ret == USBD_OK) return len;
+    if (ret != USBD_BUSY) { if (errcode) *errcode = 1; return 0; }
+
+    osDelay(1);
+    ret = CDC_Transmit_HS((uint8_t *)buf, (uint16_t)len);
+    if (ret == USBD_OK) return len;
+
+    osDelay(1);
+    ret = CDC_Transmit_HS((uint8_t *)buf, (uint16_t)len);
+    if (ret == USBD_OK) return len;
 
     if (errcode != NULL) *errcode = 1;
     return 0;

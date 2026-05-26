@@ -208,19 +208,22 @@ static void microros_vision_recv_cb(const void *msgin)
 
     Vision_Recv_s *recv = VisionGetRecvData();
 
-    /* parse JSON: {"fire_mode":N,"target_state":N,"target_type":N,"yaw":F,"pitch":F,"fire_tem":N} */
-    char buf[256];
+    /* parse JSON: {"f":N,"s":N,"t":N,"y":N,"p":N,"m":N}  yaw/pitch in centi-degrees */
+    char buf[128];
     size_t n = in->data.size < sizeof(buf) - 1 ? in->data.size : sizeof(buf) - 1;
     memcpy(buf, in->data.data, n);
     buf[n] = '\0';
 
-    sscanf(buf, "{\"fire_mode\":%d,\"target_state\":%d,\"target_type\":%d,\"yaw\":%f,\"pitch\":%f,\"fire_tem\":%hhu}",
-           (int *)&recv->fire_mode,
-           (int *)&recv->target_state,
-           (int *)&recv->target_type,
-           &recv->yaw,
-           &recv->pitch,
-           &recv->fire_tem);
+    int fm, ts, tt, yaw_cdeg, pitch_cdeg, fire_tem;
+    if (sscanf(buf, "{\"f\":%d,\"s\":%d,\"t\":%d,\"y\":%d,\"p\":%d,\"m\":%d}",
+               &fm, &ts, &tt, &yaw_cdeg, &pitch_cdeg, &fire_tem) == 6) {
+        recv->fire_mode = (Fire_Mode_e)fm;
+        recv->target_state = (Target_State_e)ts;
+        recv->target_type = (Target_Type_e)tt;
+        recv->yaw = yaw_cdeg / 100.0f;
+        recv->pitch = pitch_cdeg / 100.0f;
+        recv->fire_tem = (uint8_t)fire_tem;
+    }
 }
 
 void StartMicrorosTask(void const *argument)
@@ -261,28 +264,37 @@ void StartMicrorosTask(void const *argument)
     );
 
     /* 4. subscriber: vision computer → STM32 (target info + fire) */
-    rclc_subscription_init_default(
+    rclc_subscription_init_best_effort(
         &microros_sub_recv,
         &microros_node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
         "stm32h723/vision_recv"
     );
 
-    /* 5. executor — handles subscription callbacks */
+    /* 5. pre-allocate message buffers (required for micro-ROS string deserialization) */
+    microros_send_msg.data.data = (char *)malloc(256);
+    microros_send_msg.data.size = 0;
+    microros_send_msg.data.capacity = 256;
+
+    microros_recv_msg.data.data = (char *)malloc(256);
+    microros_recv_msg.data.size = 0;
+    microros_recv_msg.data.capacity = 256;
+
+    /* 6. executor — handles subscription callbacks */
     rclc_executor_init(&microros_executor, &microros_support.context, 2, &microros_allocator);
     rclc_executor_add_subscription(
         &microros_executor, &microros_sub_recv, &microros_recv_msg,
         microros_vision_recv_cb, ON_NEW_DATA
     );
 
-    /* 6. pre-allocate send message */
-    microros_send_msg.data.data = (char *)malloc(256);
-    microros_send_msg.data.size = 0;
-    microros_send_msg.data.capacity = 256;
-
+    int cycle = 0;
     for (;;) {
-        rclc_executor_spin_some(&microros_executor, RCL_MS_TO_NS(10));
-        osDelay(10);
+        if (++cycle >= 2) {
+            cycle = 0;
+            rclc_executor_spin_some(&microros_executor, RCL_MS_TO_NS(1));
+        }
+        microros_publish_vision();
+        osDelay(1);
     }
 }
 

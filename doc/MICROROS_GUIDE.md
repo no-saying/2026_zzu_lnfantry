@@ -158,7 +158,7 @@ source /opt/ros/humble/setup.bash
 ros2 topic echo /stm32h723/vision_send
 ```
 
-正常输出示例 (~166 Hz, JSON < 64 bytes, 整数编码):
+正常输出示例 (~400 Hz, JSON < 64 bytes, 整数编码):
 ```
 data: '{"e":0,"w":0,"b":15,"y":123,"p":-50,"r":10,"t":123456}'
 ---
@@ -177,9 +177,14 @@ data: '{"e":0,"w":0,"b":15,"y":123,"p":-50,"r":10,"t":123456}'
 
 **发送自瞄数据到下位机（模拟视觉上位机）:**
 ```bash
+# 快捷脚本
+bash tools/test_vision_recv.sh [fire_mode] [target_state] [target_type] [yaw_cdeg] [pitch_cdeg] [fire_tem]
+
+# 或直接 ros2 topic pub
 ros2 topic pub --once /stm32h723/vision_recv std_msgs/msg/String \
-  '{"data":"{\"fire_mode\":2,\"target_state\":2,\"target_type\":3,\"yaw\":1.57,\"pitch\":-0.30,\"fire_tem\":0}"}'
+  '{"data":"{\"f\":2,\"s\":2,\"t\":3,\"y\":157,\"p\":-30,\"m\":0}"}'
 ```
+> yaw/pitch 为 centi-degree 整数 (度×100)，下位机自动 ÷100 转换。
 
 ### 4. 查看节点信息
 
@@ -193,7 +198,7 @@ ros2 topic list
 #        /parameter_events
 
 ros2 topic hz /stm32h723/vision_send
-# 应输出: ~166 Hz (BEST_EFFORT publisher)
+# 应输出: ~400 Hz (BEST_EFFORT publisher)
 ```
 
 ## 下位机 API
@@ -224,6 +229,12 @@ gimbal_cmd_send.yaw = -vision_recv_data->yaw;
 gimbal_cmd_send.pitch = vision_recv_data->pitch;
 ```
 
+### 实现注意事项
+
+- **接收缓冲区预分配**: `std_msgs__msg__String` 的 `data.data` 必须用 `malloc()` 预分配内存，否则 micro-ROS 反序列化无目标缓冲区，回调不会被触发。
+- **spin_some 交错调度**: executor 每 2 次迭代执行一次 `spin_some(1ms)`，兼顾接收可靠性和发布频率。过于频繁会降低发布速率，过于稀疏会丢失接收数据。
+- **pack(1) 安全解析**: `Vision_Recv_s` 使用 `#pragma pack(1)`，`sscanf` 必须写入 `int` 局部变量后再赋值到 packed enum 字段，避免 4 字节写入覆盖相邻字段。
+
 ### 切换回原始串口模式
 
 在 Makefile 中删除 `-DMICRO_ROS_ENABLED`，vision 数据自动回退到 seasky 协议，`VisionSend()` 和 seasky 解析恢复工作。
@@ -234,11 +245,11 @@ gimbal_cmd_send.pitch = vision_recv_data->pitch;
 |------|--------------------------|--------------------------|
 | Topic 名称 | `/stm32h723/vision_send` | `/stm32h723/vision_recv` |
 | 消息类型 | `std_msgs/msg/String` | `std_msgs/msg/String` |
-| 数据格式 | JSON: e(敌色), w(模式), b(弹速), y(偏航×100), p(俯仰×100), r(滚转×100), t(时间戳) | JSON: fire_mode, target_state, target_type, yaw, pitch, fire_tem |
-| QoS | BEST_EFFORT | 默认 (RELIABLE) |
-| 发布频率 | ~166 Hz (实测) | N/A |
+| 数据格式 | JSON: e(敌色), w(模式), b(弹速), y(偏航×100), p(俯仰×100), r(滚转×100), t(时间戳) | JSON: f(开火), s(目标状态), t(目标类型), y(偏航×100), p(俯仰×100), m(开火指令) |
+| QoS | BEST_EFFORT | BEST_EFFORT |
+| 发布频率 | ~400 Hz | 按需 |
 
-> **QoS 说明**: vision_send 使用 BEST_EFFORT 以获得高频率 (~166 Hz)；RELIABLE QoS 受 XRCE write-limit 限制仅 1 Hz。上位机 `ros2 topic echo` 订阅时自动适配 QoS。
+> **QoS 说明**: 两个 topic 均使用 BEST_EFFORT。vision_send 以获得 ~400 Hz 发布频率；vision_recv 以避免 RELIABLE ACK 导致 XRCE 流冲突。上位机 `ros2 topic echo` 订阅时自动适配 QoS。
 
 ### vision_send JSON 示例 (压缩格式, < 64 bytes)
 
@@ -248,13 +259,13 @@ gimbal_cmd_send.pitch = vision_recv_data->pitch;
 
 > yaw/pitch/roll 为 centi-degree 整数 (原始弧度 ×100 取整)。上位机需除以 100 恢复为度。
 
-### vision_recv JSON 示例
+### vision_recv JSON 示例 (压缩格式, < 48 bytes)
 
 ```json
-{"fire_mode":1,"target_state":2,"target_type":3,"yaw":1.57,"pitch":-0.30,"fire_tem":0}
+{"f":2,"s":2,"t":3,"y":157,"p":-30,"m":0}
 ```
 
-> vision_recv 仍使用浮点字符串格式（上位机视觉程序发送）。
+> yaw/pitch 为 centi-degree 整数 (度×100)，下位机自动 ÷100 恢复。上位机发送时需 ×100 取整。
 
 ## 添加自定义消息类型
 
@@ -311,5 +322,8 @@ void publishRobotState(void)
 | | 头文件路径错误 | 确认 `microros_include/` 指针正确 |
 | 固件溢出 | FreeRTOS 堆过大 | DTCMRAM 段是否生效 (查看 map: `.dtcmram` 应有内容) |
 | 烧录后 agent 无法连接 | STM32 需重新枚举 USB | 按一下复位键，等待 USB 重新枚举后再启动 agent |
-| 发布频率低 (< 10 Hz) | QoS 误用 RELIABLE | 确认 `freertos.c` 中 publisher 使用 `rclc_publisher_init_best_effort` |
+| 发布频率低 (< 50 Hz) | QoS 误用 RELIABLE | 确认 `freertos.c` 中 publisher 使用 `rclc_publisher_init_best_effort` |
 | `ros2 topic echo` 报 QoS 不兼容 | subscriber 默认 RELIABLE | 正常现象，micro-ROS agent 已自动处理，数据仍可达 |
+| vision_recv 收不到数据 | recv_msg 缓冲区未预分配 | 确认 `freertos.c` 中 `microros_recv_msg.data.data` 已 `malloc(256)` |
+| | spin_some 间隔过长 | 确保 executor spin 间隔 ≤ 2 次迭代 (≤ 2ms) |
+| | XRCE session 创建顺序 | 先启动 agent，再复位 STM32 |

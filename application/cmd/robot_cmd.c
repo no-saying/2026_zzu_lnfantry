@@ -473,7 +473,7 @@ void RobotCMDTask()
     VisionSetAltitude(gimbal_fetch_data.gimbal_imu_data.YawTotalAngle,
                       gimbal_fetch_data.gimbal_imu_data.Pitch,
                       gimbal_fetch_data.gimbal_imu_data.Roll);
-    microros_publish_vision();
+    // microros_publish_vision() called from StartMicrorosTask at 1kHz
 #else
     VisionRecvPoll();
     VisionSend();
