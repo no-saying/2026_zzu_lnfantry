@@ -101,6 +101,7 @@ typedef struct
  */
 Vision_Recv_s *VisionInit(void);
 void VisionSend(void);
+void VisionRecvPoll(void);
 
 Vision_Send_s *VisionGetSendData(void);
 Vision_Recv_s *VisionGetRecvData(void);

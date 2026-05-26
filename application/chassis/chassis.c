@@ -46,9 +46,11 @@ static DJIMotorInstance *motor_lf, *motor_rf, *motor_lb, *motor_rb; // left righ
 static PIDInstance chassis_follow_to_yaw_pid;
 static BuzzzerInstance *buzzerc;
 static SuperCap_s *supercap;
+static attitude_t *chassis_IMU_data;
 static Gimbal_Upload_Data_s gimbal_fetch_data; // 从云台获取的反馈信息
 void ChassisInit()
 {
+    chassis_IMU_data = INS_Init();
     supercap = SuperCapInit(&hcan1);
     supercap->TX_Temp.Enable = DISABLE;
     supercap->TX_Temp.Powerlimit = 45;
@@ -218,7 +220,7 @@ static void UpdateChassisWZ()
     case CHASSIS_FOLLOW_GIMBAL_YAW: // 跟随云台
         // 这里可以根据offset_angle计算wz，需要云台角度反馈
         // 当前简单实现为固定值，实际应使用PID控制
-        chassis_cmd_recv.wz = PIDCalculate(&chassis_follow_to_yaw_pid, chassis_cmd_recv.offset_angle, 0) - 0.5 * REAL_WZ_RAT * gimbal_fetch_data.gimbal_imu_data.Gyro[2];
+        chassis_cmd_recv.wz = PIDCalculate(&chassis_follow_to_yaw_pid, chassis_cmd_recv.offset_angle, 0) - 0.5 * REAL_WZ_RAT * chassis_IMU_data->Gyro[2];
 
         break;
     case CHASSIS_ROTATE: // 自旋

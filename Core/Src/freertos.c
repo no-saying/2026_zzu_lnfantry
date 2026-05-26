@@ -27,12 +27,14 @@
 /* USER CODE BEGIN Includes */
 #include "microros_transport.h"
 #ifdef MICRO_ROS_ENABLED
+#include "usb_device.h"
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 #include <rmw_microxrcedds_c/config.h>
 #include <rmw_microros/custom_transport.h>
+#include <rmw_microros/time_sync.h>
 #include <std_msgs/msg/string.h>
 #endif
 /* USER CODE END Includes */
@@ -151,7 +153,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
 #ifdef MICRO_ROS_ENABLED
-  osThreadDef(microrosTask, StartMicrorosTask, osPriorityAboveNormal, 0, 2048);
+  osThreadDef(microrosTask, StartMicrorosTask, osPriorityNormal, 0, 8192);
   microrosTaskHandle = osThreadCreate(osThread(microrosTask), NULL);
 #endif
   /* USER CODE END RTOS_THREADS */
@@ -168,7 +170,9 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void const * argument)
 {
   /* init code for USB_DEVICE */
+#ifndef MICRO_ROS_ENABLED
   MX_USB_DEVICE_Init();
+#endif
   /* USER CODE BEGIN StartDefaultTask */
   /* Infinite loop */
   for(;;)
@@ -223,25 +227,33 @@ void StartMicrorosTask(void const *argument)
 {
     (void)argument;
 
+    /* 0. ensure USB CDC is initialised (defaultTask may not have run yet) */
+    MX_USB_DEVICE_Init();
+    osDelay(200);  /* wait for USB enumeration on host side */
+
     /* 1. register custom transport */
     rmw_uros_set_custom_transport(
-        false, NULL,
+        true, NULL,
         microros_transport_open,
         microros_transport_close,
         microros_transport_write,
         microros_transport_read
     );
 
-    /* 2. init micro-ROS */
+    /* 2. init micro-ROS with retry (agent may not be running yet) */
     microros_allocator = rcl_get_default_allocator();
 
-    if (rclc_support_init(&microros_support, 0, NULL, &microros_allocator) != RCL_RET_OK) {
-        for (;;) { osDelay(1000); }
+    rcl_ret_t rc = RCL_RET_ERROR;
+    while (rc != RCL_RET_OK) {
+        rc = rclc_support_init(&microros_support, 0, NULL, &microros_allocator);
+        if (rc == RCL_RET_OK) break;
+        osDelay(500);
     }
+
     rclc_node_init_default(&microros_node, "stm32h723_node", "", &microros_support);
 
     /* 3. publisher: STM32 → vision computer (gimbal attitude + flags) */
-    rclc_publisher_init_default(
+    rclc_publisher_init_best_effort(
         &microros_pub_send,
         &microros_node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
@@ -269,25 +281,53 @@ void StartMicrorosTask(void const *argument)
     microros_send_msg.data.capacity = 256;
 
     for (;;) {
-        rclc_executor_spin_some(&microros_executor, RCL_MS_TO_NS(5));
-        osDelay(1);
+        rclc_executor_spin_some(&microros_executor, RCL_MS_TO_NS(10));
+        osDelay(10);
     }
 }
 
 /* publish gimbal attitude + flags to vision computer (JSON over std_msgs/String) */
+/* floats encoded as centi-degrees (x100); hand-rolled formatter avoids snprintf overhead */
+static int jtoa(char *dst, int val)
+{
+    if (val == 0) { dst[0] = '0'; return 1; }
+    char tmp[12], *p = tmp;
+    int neg = val < 0;
+    if (neg) val = -val;
+    while (val) { *p++ = '0' + (val % 10); val /= 10; }
+    char *q = dst;
+    if (neg) *q++ = '-';
+    while (p > tmp) *q++ = *--p;
+    return q - dst;
+}
+
 rcl_ret_t microros_publish_vision(void)
 {
     Vision_Send_s *send = VisionGetSendData();
-    if (microros_send_msg.data.data == NULL) return RCL_RET_ERROR;
+    char *buf = microros_send_msg.data.data;
+    if (buf == NULL) return RCL_RET_ERROR;
 
-    int n = snprintf(microros_send_msg.data.data, microros_send_msg.data.capacity,
-        "{\"enemy_color\":%d,\"work_mode\":%d,\"bullet_speed\":%d,\"yaw\":%.2f,\"pitch\":%.2f,\"roll\":%.2f}",
-        send->enemy_color, send->work_mode, send->bullet_speed,
-        send->yaw, send->pitch, send->roll);
-    if (n < 0) return RCL_RET_ERROR;
-    microros_send_msg.data.size = n;
+    char *p = buf;
+    memcpy(p, "{\"e\":", 5); p += 5;
+    p += jtoa(p, (int)send->enemy_color);
+    memcpy(p, ",\"w\":", 5); p += 5;
+    p += jtoa(p, (int)send->work_mode);
+    memcpy(p, ",\"b\":", 5); p += 5;
+    p += jtoa(p, (int)send->bullet_speed);
+    memcpy(p, ",\"y\":", 5); p += 5;
+    p += jtoa(p, (int)(send->yaw * 100.0f));
+    memcpy(p, ",\"p\":", 5); p += 5;
+    p += jtoa(p, (int)(send->pitch * 100.0f));
+    memcpy(p, ",\"r\":", 5); p += 5;
+    p += jtoa(p, (int)(send->roll * 100.0f));
+    memcpy(p, ",\"t\":", 5); p += 5;
+    p += jtoa(p, (int)HAL_GetTick());
+    *p++ = '}';
 
-    return rcl_publish(&microros_pub_send, &microros_send_msg, NULL);
+    microros_send_msg.data.size = p - buf;
+
+    rcl_ret_t ret = rcl_publish(&microros_pub_send, &microros_send_msg, NULL);
+    return ret;
 }
 
 #else /* MICRO_ROS_ENABLED not defined — stub task */

@@ -38,11 +38,26 @@ void VisionSetAltitude(float yaw, float pitch, float roll)
 Vision_Send_s *VisionGetSendData(void) { return &send_data; }
 Vision_Recv_s *VisionGetRecvData(void) { return &recv_data; }
 
-/* ──── raw seasky serial (disabled when micro-ROS is enabled) ──── */
-#if defined(COMM_USE_VCP) && !defined(MICRO_ROS_ENABLED)
+/* ──── vision communication transport selection ──── */
+
+#if defined(MICRO_ROS_ENABLED)
+/* micro-ROS handles vision I/O over ROS 2 topics — raw serial disabled */
+
+Vision_Recv_s *VisionInit(void)
+{
+    return &recv_data;
+}
+
+void VisionSend(void)
+{
+    /* data is published via microros_publish_vision() in RobotCMDTask */
+}
+
+#elif defined(COMM_USE_VCP)
+/* Raw seasky protocol over USB VCP — original Hero behaviour */
 
 #include "bsp_usb.h"
-static uint8_t *vis_recv_buff;
+static uint8_t vis_recv_buff[APP_RX_DATA_SIZE];
 
 static void VisionOfflineCallback(void *id)
 {
@@ -50,17 +65,10 @@ static void VisionOfflineCallback(void *id)
     LOGWARNING("[vision] vision offline, restart communication.");
 }
 
-static void DecodeVision(uint16_t len)
-{
-    uint16_t flag_register;
-    DaemonReload(vision_daemon_instance);
-    get_protocol_info(vis_recv_buff, &flag_register, (uint8_t *)&recv_data.yaw);
-}
-
 Vision_Recv_s *VisionInit(void)
 {
-    USB_Init_Config_s conf = {.rx_cbk = DecodeVision};
-    vis_recv_buff = USBInit(conf);
+    USB_Init_Config_s conf = {0};
+    USBInit(conf);
 
     Daemon_Init_Config_s daemon_conf = {
         .callback = VisionOfflineCallback,
@@ -70,6 +78,16 @@ Vision_Recv_s *VisionInit(void)
     vision_daemon_instance = DaemonRegister(&daemon_conf);
 
     return &recv_data;
+}
+
+void VisionRecvPoll(void)
+{
+    uint32_t len = CDC_ReadRxData(vis_recv_buff, sizeof(vis_recv_buff));
+    if (len > 0) {
+        uint16_t flag_register;
+        DaemonReload(vision_daemon_instance);
+        get_protocol_info(vis_recv_buff, &flag_register, (uint8_t *)&recv_data.yaw);
+    }
 }
 
 void VisionSend(void)
@@ -82,17 +100,6 @@ void VisionSend(void)
     USBTransmit(send_buff, tx_len);
 }
 
-#elif defined(MICRO_ROS_ENABLED)
-/* micro-ROS handles vision I/O — raw serial disabled */
-
-Vision_Recv_s *VisionInit(void)
-{
-    return &recv_data;
-}
-
-void VisionSend(void)
-{
-    /* data published via microros_publish_vision() called in RobotCMDTask */
-}
-
-#endif /* COMM_USE_VCP && !MICRO_ROS_ENABLED */
+#else
+#error "No communication transport defined! Define MICRO_ROS_ENABLED or COMM_USE_VCP in Makefile C_DEFS."
+#endif

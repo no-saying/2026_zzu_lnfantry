@@ -22,7 +22,7 @@
 #include "usbd_cdc_if.h"
 
 /* USER CODE BEGIN INCLUDE */
-
+#include <string.h>
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -95,10 +95,11 @@ uint8_t UserRxBufferHS[APP_RX_DATA_SIZE];
 uint8_t UserTxBufferHS[APP_TX_DATA_SIZE];
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
-#define CDC_MAX_CB 2
-static USBCallback tx_cbk[CDC_MAX_CB] = {NULL, NULL};
-static USBCallback rx_cbk[CDC_MAX_CB] = {NULL, NULL};
-static int cdc_cb_cnt = 0;
+#define USB_RX_BUF_SIZE 4096
+static uint8_t  cdc_rx_buf[USB_RX_BUF_SIZE];
+static volatile size_t cdc_rx_head = 0;
+static volatile size_t cdc_rx_tail = 0;
+SemaphoreHandle_t cdc_tx_complete_sem = NULL;
 /* USER CODE END PRIVATE_VARIABLES */
 
 /**
@@ -267,10 +268,20 @@ static int8_t CDC_Control_HS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_HS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 11 */
-  for (int i = 0; i < cdc_cb_cnt; i++) {
-      if (rx_cbk[i] != NULL && *Len > 0) {
-          rx_cbk[i]((uint16_t)*Len);
+  if (*Len > 0 && *Len <= APP_RX_DATA_SIZE) {
+      uint32_t n = *Len;
+      size_t tail = cdc_rx_tail;
+
+      if ((tail + n) > USB_RX_BUF_SIZE) {
+          size_t first = USB_RX_BUF_SIZE - tail;
+          memcpy(&cdc_rx_buf[tail], Buf, first);
+          memcpy(&cdc_rx_buf[0], Buf + first, n - first);
+          tail = n - first;
+      } else {
+          memcpy(&cdc_rx_buf[tail], Buf, n);
+          tail += n;
       }
+      cdc_rx_tail = tail;
   }
   USBD_CDC_SetRxBuffer(&hUsbDeviceHS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceHS);
@@ -316,25 +327,39 @@ static int8_t CDC_TransmitCplt_HS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
   uint8_t result = USBD_OK;
   /* USER CODE BEGIN 14 */
   UNUSED(Buf);
+  UNUSED(Len);
   UNUSED(epnum);
-  for (int i = 0; i < cdc_cb_cnt; i++) {
-      if (tx_cbk[i] != NULL) {
-          tx_cbk[i]((uint16_t)*Len);
-      }
+  if (cdc_tx_complete_sem != NULL) {
+      BaseType_t woken = pdFALSE;
+      xSemaphoreGiveFromISR(cdc_tx_complete_sem, &woken);
+      portYIELD_FROM_ISR(woken);
   }
   /* USER CODE END 14 */
   return result;
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
-uint8_t *CDCInitRxbufferNcallback(USBCallback tx, USBCallback rx)
+uint32_t CDC_ReadRxData(uint8_t *dst, uint32_t maxlen)
 {
-    if (cdc_cb_cnt < CDC_MAX_CB) {
-        tx_cbk[cdc_cb_cnt] = tx;
-        rx_cbk[cdc_cb_cnt] = rx;
-        cdc_cb_cnt++;
+    size_t head = cdc_rx_head;
+    size_t tail = cdc_rx_tail;
+    if (head == tail) return 0;
+
+    uint32_t avail = (tail > head) ? (tail - head) : (USB_RX_BUF_SIZE - head + tail);
+    uint32_t n = (avail < maxlen) ? avail : maxlen;
+    if (n == 0) return 0;
+
+    if ((head + n) > USB_RX_BUF_SIZE) {
+        size_t first = USB_RX_BUF_SIZE - head;
+        memcpy(dst, &cdc_rx_buf[head], first);
+        memcpy(dst + first, &cdc_rx_buf[0], n - first);
+    } else {
+        memcpy(dst, &cdc_rx_buf[head], n);
     }
-    return UserRxBufferHS;
+
+    head = (head + n) % USB_RX_BUF_SIZE;
+    cdc_rx_head = head;
+    return n;
 }
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

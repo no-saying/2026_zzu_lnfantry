@@ -475,6 +475,7 @@ void RobotCMDTask()
                       gimbal_fetch_data.gimbal_imu_data.Roll);
     microros_publish_vision();
 #else
+    VisionRecvPoll();
     VisionSend();
 #endif
 }

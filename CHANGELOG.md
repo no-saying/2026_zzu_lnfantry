@@ -1,5 +1,26 @@
 # 更新日志
 
+## 2026-05-26 — 通信性能优化 (166 Hz)
+
+### 优化
+- **QoS 切换**: vision_send publisher 从 RELIABLE 改为 BEST_EFFORT，频率从 ~1 Hz 提升至 ~166 Hz (166x)
+- **JSON 压缩**: 键名缩短 (enemy_color→e, work_mode→w, bullet_speed→b, yaw→y, pitch→p, roll→r, +t 时间戳)
+- **整数编码**: yaw/pitch/roll 改用 centi-degree 整数 (×100)，避免 newlib-nano `%f` 空输出问题，单包 < 64 bytes
+- **手写 jtoa 格式化器**: 替代 snprintf，无堆分配，零格式化开销
+
+### 修复
+- **USB CDC 传输稳定性**: 回退 semaphore 方案为 osDelay(1) 轮询+20次重试，消除多写入者竞态导致的 USB 断连
+- **USB 设备识别**: 确认 ttyACM0=JLink VCOM, ttyACM1=STM32 VCP，agent 需连接 ttyACM1
+
+### 文件变更
+| 文件 | 变更 |
+|------|------|
+| `Core/Src/freertos.c` | publisher→BEST_EFFORT, JSON压缩, jtoa, executor 10ms |
+| `microros_transport/microros_transport.c` | VCP write 回退轮询+重试 |
+| `application/cmd/robot_cmd.c` | MICRO_ROS 路径调用 microros_publish_vision |
+| `application/robot_task.h` | 移除 INS 任务中的 vision publish |
+| `MICROROS_GUIDE.md` | 更新 JSON 格式、QoS、频率、agent 命令 |
+
 ## 2026-05-26 — vision 通信统一 + 原生构建
 
 ### 修改

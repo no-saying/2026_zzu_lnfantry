@@ -50,13 +50,14 @@ Core/           STM32CubeMX 生成代码 + FreeRTOS
 
 ### FreeRTOS 任务分配
 
-| 任务          | 频率      | 优先级           | 职责                 |
-| ------------- | --------- | ---------------- | -------------------- |
-| INS Task      | 1 kHz     | Above Normal     | IMU 姿态解算         |
-| Motor Task    | 1 kHz     | Normal           | 电机闭环计算 + CAN 发送 |
-| Robot Task    | 200 Hz    | Normal           | 整车应用逻辑总调度   |
-| Daemon Task   | 100 Hz    | Normal           | 模块离线检测 + 蜂鸣器 |
-| UI Task       | 按需      | Normal           | 裁判系统 UI 刷新     |
+| 任务              | 频率      | 优先级           | 职责                          |
+| ----------------- | --------- | ---------------- | ----------------------------- |
+| INS Task          | 1 kHz     | Above Normal     | IMU 姿态解算                  |
+| Motor Task        | 1 kHz     | Normal           | 电机闭环计算 + CAN 发送        |
+| Robot Task        | 200 Hz    | Normal           | 整车应用逻辑总调度             |
+| Daemon Task       | 100 Hz    | Normal           | 模块离线检测 + 蜂鸣器          |
+| Micro-ROS Task    | ~100 Hz   | Normal           | micro-ROS 通信 (Agent 对接)    |
+| UI Task           | 按需      | Normal           | 裁判系统 UI 刷新              |
 
 ## 开发环境
 

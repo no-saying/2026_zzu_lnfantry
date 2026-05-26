@@ -30,7 +30,7 @@
 #include "usbd_cdc.h"
 
 /* USER CODE BEGIN INCLUDE */
-
+#include "cmsis_os.h"
 /* USER CODE END INCLUDE */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -63,8 +63,6 @@
   * @{
   */
 
-typedef void (*USBCallback)(uint16_t len);
-
 /* USER CODE BEGIN EXPORTED_TYPES */
 
 /* USER CODE END EXPORTED_TYPES */
@@ -95,7 +93,7 @@ typedef void (*USBCallback)(uint16_t len);
 extern USBD_CDC_ItfTypeDef USBD_Interface_fops_HS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
-
+extern SemaphoreHandle_t cdc_tx_complete_sem;
 /* USER CODE END EXPORTED_VARIABLES */
 
 /**
@@ -108,7 +106,7 @@ extern USBD_CDC_ItfTypeDef USBD_Interface_fops_HS;
   */
 
 uint8_t CDC_Transmit_HS(uint8_t* Buf, uint16_t Len);
-uint8_t *CDCInitRxbufferNcallback(USBCallback tx_cbk, USBCallback rx_cbk);
+uint32_t CDC_ReadRxData(uint8_t *dst, uint32_t maxlen);
 
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
 
@@ -131,4 +129,3 @@ uint8_t *CDCInitRxbufferNcallback(USBCallback tx_cbk, USBCallback rx_cbk);
 #endif
 
 #endif /* __USBD_CDC_IF_H__ */
-

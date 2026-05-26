@@ -2,48 +2,29 @@
 
 #if defined(COMM_USE_VCP)
 
-/* ====== USB CDC (VCP) transport via bsp_usb ====== */
+/* ====== USB CDC (VCP) transport via bsp_usb (polling) ====== */
 #include "bsp_usb.h"
+#include "usbd_cdc_if.h"
 #include "cmsis_os.h"
 #include <string.h>
 
-#define MROS_RX_BUF_MAX 512
-
-static uint8_t rx_buf[MROS_RX_BUF_MAX];
-static volatile size_t rx_len = 0;
-static SemaphoreHandle_t rx_sem = NULL;
-
-static void microros_usb_rx_cbk(uint16_t len)
-{
-    extern uint8_t UserRxBufferHS[];
-    size_t n = (len < MROS_RX_BUF_MAX) ? len : MROS_RX_BUF_MAX;
-    memcpy(rx_buf, UserRxBufferHS, n);
-    rx_len = n;
-    if (rx_sem != NULL) {
-        BaseType_t woken = pdFALSE;
-        xSemaphoreGiveFromISR(rx_sem, &woken);
-        portYIELD_FROM_ISR(woken);
-    }
-}
+static bool transport_opened = false;
 
 bool microros_transport_open(struct uxrCustomTransport *transport)
 {
     (void)transport;
-    rx_sem = xSemaphoreCreateBinary();
-    if (rx_sem == NULL) return false;
+    if (transport_opened) return true;
 
-    USB_Init_Config_s conf = {.rx_cbk = microros_usb_rx_cbk};
+    USB_Init_Config_s conf = {0};
     USBInit(conf);
+    transport_opened = true;
     return true;
 }
 
 bool microros_transport_close(struct uxrCustomTransport *transport)
 {
     (void)transport;
-    if (rx_sem != NULL) {
-        vSemaphoreDelete(rx_sem);
-        rx_sem = NULL;
-    }
+    transport_opened = false;
     return true;
 }
 
@@ -52,22 +33,38 @@ size_t microros_transport_write(struct uxrCustomTransport *transport, const uint
     (void)transport;
     if (errcode != NULL) *errcode = 0;
     if (len > APP_TX_DATA_SIZE) len = APP_TX_DATA_SIZE;
-    USBTransmit((uint8_t *)buf, (uint16_t)len);
-    return len;
+
+    int retries = 20;
+    uint8_t ret;
+    while (retries--) {
+        ret = CDC_Transmit_HS((uint8_t *)buf, (uint16_t)len);
+        if (ret == USBD_OK) return len;
+        if (ret == USBD_BUSY) {
+            osDelay(1);
+            continue;
+        }
+        break;
+    }
+
+    if (errcode != NULL) *errcode = 1;
+    return 0;
 }
 
 size_t microros_transport_read(struct uxrCustomTransport *transport, uint8_t *buf, size_t len, int timeout_ms, uint8_t *errcode)
 {
     (void)transport;
     if (errcode != NULL) *errcode = 0;
-    if (rx_sem == NULL) return 0;
-    if (xSemaphoreTake(rx_sem, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
-        return 0;
+
+    uint32_t n;
+    int elapsed = 0;
+
+    while ((n = CDC_ReadRxData(buf, (uint32_t)len)) == 0) {
+        if (timeout_ms >= 0 && elapsed >= timeout_ms) return 0;
+        osDelay(1);
+        elapsed++;
     }
-    size_t n = (rx_len < len) ? rx_len : len;
-    memcpy(buf, rx_buf, n);
-    rx_len = 0;
-    return n;
+
+    return (size_t)n;
 }
 
 #else /* COMM_USE_UART (default) — USART10 DMA */

@@ -140,7 +140,7 @@ colcon build
 **VCP 模式** (USB 虚拟串口):
 ```bash
 source ~/microros_ws/install/setup.bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0 -b 115200
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM1 -b 115200
 ```
 
 **UART 模式** (USART10, 需 USB-TTL):
@@ -158,11 +158,22 @@ source /opt/ros/humble/setup.bash
 ros2 topic echo /stm32h723/vision_send
 ```
 
-正常输出示例:
+正常输出示例 (~166 Hz, JSON < 64 bytes, 整数编码):
 ```
-data: '{"enemy_color":1,"work_mode":0,"bullet_speed":15,"yaw":1.23,"pitch":-0.50,"roll":0.10}'
+data: '{"e":0,"w":0,"b":15,"y":123,"p":-50,"r":10,"t":123456}'
 ---
 ```
+
+字段说明:
+| Key | 含义 | 编码 |
+|-----|------|------|
+| e | enemy_color | 原始值 |
+| w | work_mode | 原始值 |
+| b | bullet_speed | 原始值 |
+| y | yaw | centi-degree (×100), 123 = 1.23° |
+| p | pitch | centi-degree (×100), -50 = -0.50° |
+| r | roll | centi-degree (×100), 10 = 0.10° |
+| t | timestamp | ms (HAL_GetTick) |
 
 **发送自瞄数据到下位机（模拟视觉上位机）:**
 ```bash
@@ -180,6 +191,9 @@ ros2 topic list
 # 应输出: /stm32h723/vision_send
 #        /stm32h723/vision_recv
 #        /parameter_events
+
+ros2 topic hz /stm32h723/vision_send
+# 应输出: ~166 Hz (BEST_EFFORT publisher)
 ```
 
 ## 下位机 API
@@ -220,20 +234,27 @@ gimbal_cmd_send.pitch = vision_recv_data->pitch;
 |------|--------------------------|--------------------------|
 | Topic 名称 | `/stm32h723/vision_send` | `/stm32h723/vision_recv` |
 | 消息类型 | `std_msgs/msg/String` | `std_msgs/msg/String` |
-| 数据格式 | JSON: enemy_color, work_mode, bullet_speed, yaw, pitch, roll | JSON: fire_mode, target_state, target_type, yaw, pitch, fire_tem |
-| QoS | 默认 | 默认 |
+| 数据格式 | JSON: e(敌色), w(模式), b(弹速), y(偏航×100), p(俯仰×100), r(滚转×100), t(时间戳) | JSON: fire_mode, target_state, target_type, yaw, pitch, fire_tem |
+| QoS | BEST_EFFORT | 默认 (RELIABLE) |
+| 发布频率 | ~166 Hz (实测) | N/A |
 
-### vision_send JSON 示例
+> **QoS 说明**: vision_send 使用 BEST_EFFORT 以获得高频率 (~166 Hz)；RELIABLE QoS 受 XRCE write-limit 限制仅 1 Hz。上位机 `ros2 topic echo` 订阅时自动适配 QoS。
+
+### vision_send JSON 示例 (压缩格式, < 64 bytes)
 
 ```json
-{"enemy_color":1,"work_mode":0,"bullet_speed":15,"yaw":1.23,"pitch":-0.50,"roll":0.10}
+{"e":0,"w":0,"b":15,"y":123,"p":-50,"r":10,"t":123456}
 ```
+
+> yaw/pitch/roll 为 centi-degree 整数 (原始弧度 ×100 取整)。上位机需除以 100 恢复为度。
 
 ### vision_recv JSON 示例
 
 ```json
 {"fire_mode":1,"target_state":2,"target_type":3,"yaw":1.57,"pitch":-0.30,"fire_tem":0}
 ```
+
+> vision_recv 仍使用浮点字符串格式（上位机视觉程序发送）。
 
 ## 添加自定义消息类型
 
@@ -282,10 +303,13 @@ void publishRobotState(void)
 | 现象 | 可能原因 | 解决方法 |
 |------|---------|---------|
 | Agent 无法连接 | 串口设备错误 | `ls /dev/tty*` 确认设备名 |
-| | 串口被占用 | `sudo lsof /dev/ttyACM0` 查找占用进程 |
+| | 串口被占用 | `sudo lsof /dev/ttyACM1` 查找占用进程 |
 | | 下位机 VCP 未初始化 | 检查 USB 线缆连接，确认 `COMM_USE_VCP` 宏已定义 |
 | `ros2 topic echo` 无输出 | publisher 未创建 | 检查 `freertos.c` 中 StartMicrorosTask 是否正常启动 |
 | | 消息未发送 | `MICRO_ROS_ENABLED` 未定义，或 `microros_publish_vision()` 未执行 |
 | 编译报找不到 micro-ROS 头文件 | 库未构建 | 确认 `lib/libmicroros.a` 存在 |
 | | 头文件路径错误 | 确认 `microros_include/` 指针正确 |
 | 固件溢出 | FreeRTOS 堆过大 | DTCMRAM 段是否生效 (查看 map: `.dtcmram` 应有内容) |
+| 烧录后 agent 无法连接 | STM32 需重新枚举 USB | 按一下复位键，等待 USB 重新枚举后再启动 agent |
+| 发布频率低 (< 10 Hz) | QoS 误用 RELIABLE | 确认 `freertos.c` 中 publisher 使用 `rclc_publisher_init_best_effort` |
+| `ros2 topic echo` 报 QoS 不兼容 | subscriber 默认 RELIABLE | 正常现象，micro-ROS agent 已自动处理，数据仍可达 |
