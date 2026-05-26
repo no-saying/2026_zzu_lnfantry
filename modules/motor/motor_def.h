@@ -108,7 +108,8 @@ typedef enum
     M2006,
     LK9025,
     HT04,
-    GOM8010
+    GOM8010,
+    DM_MOTOR
 } Motor_Type_e;
 
 /**

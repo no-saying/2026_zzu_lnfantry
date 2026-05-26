@@ -1,5 +1,54 @@
 # 更新日志
 
+## 2026-05-26 — DM 电机协议完善
+
+### DM 电机协议重写 (`dmmotor.c/h`)
+基于官方 [damiao_ros2](https://github.com/yerik0507/damiao_ros2) 完整协议实现:
+- **电机型号支持**: 新增 `DM_Motor_Type_e` 枚举 (DM4310 ~ DMG6220 共 12 种型号)
+- **per-type 限制查表**: `DM_Motor_Limit_s` 结构体 + `dm_motor_limits[]` 常量表，位置/速度/扭矩限制按型号区分 (如 DM4310: ±12.5 rad / ±30 rad/s / ±10 Nm)
+- **控制模式切换**: 新增 `DM_Control_Mode_e` (MIT/位置-速度/速度/位置-力)，通过 `DMMotorSetControlMode()` 写 RID=10 切换
+- **MIT 帧修正**: send 帧 `tx[3]`/`tx[6]` 增加 `& 0xF` 掩码保护；decode 使用 per-motor limits 替代硬编码 ±3.1416 rad
+- **寄存器读写**: 新增 `DMMotorReadRegister()` / `DMMotorWriteRegister()`，通过 CAN ID 0x7FF + 命令 0x33/0x55 读写电机参数
+- **参数保存**: 新增 `DMMotorSaveParams()`，CAN ID 0x7FF + 命令 0xAA 保存到电机 Flash
+- **枚举重命名**: `DMMotor_Mode_e` → `DM_Motor_Cmd_e`，区分状态命令 (使能/停止/归零) 与控制模式
+
+### motor_def.h
+- `Motor_Type_e` 新增 `DM_MOTOR` 类型
+
+## 2026-05-26 — 模块扩展与通信优化
+
+### micro-ROS 优化
+- **发布频率提升**: ~166 Hz → ~400 Hz，采用 spin_some 交错调度 (每 2 次迭代 spin 1ms)
+- **vision_recv 修复**: 订阅消息缓冲区必须 `malloc(256)` 预分配，否则 micro-ROS 反序列化无目标缓冲区导致回调永不触发
+- **QoS 统一**: vision_recv 也改为 BEST_EFFORT，避免 RELIABLE ACK 与高频 vision_send 竞争 XRCE 流
+- **传输层写入优化**: CDC 发送重试从 20 次减为 3 次，每次 osDelay(1)，减少阻塞时间
+- **pack(1) 安全解析**: `sscanf` 写入 `int` 局部变量后赋值到 packed 字段，避免 4 字节写入覆盖相邻内存
+
+### 模块更新
+- **GO 电机驱动重写** (`go_motor.c/h`):
+  - 数据类型从 `int16`/`int32` 升级为 `float32`，控制精度提升
+  - 新增 `GOMotor_Control_Setting_s` 结构体：Kp/Kd + 跳跃参数 + 加速度前馈
+  - RS485 总线支持：新增 `GOMotorUSARTInstance` 封装 `USARTInstance + DaemonInstance`
+  - 电机数量上限 GO_MOTOR_CNT 从 4 → 16
+  - 新增 `SetMode()`、`SetPos()`、`Stop()`、`Enable()` 等独立控制 API
+  - 控制报文 (`motor_ctrl`) 改为精确打包 (`#pragma pack(1)`)，pos_set 从 `int` 扩展为 `int32_t`
+- **DM 电机** (`dmmotor.c/h`):
+  - 新增 `DMMotorSetMode()` 接口
+  - 电机数量上限 DM_MOTOR_CNT 4
+
+### BSP 更新
+- **bsp_usart**: 新增 RS485 总线支持 (`enable_485`/`id` 字段)、`USART_H7_SetBaudRateOnly()` 函数
+- **Makefile**: 新增 `power_switch` 模块编译；`clean` 从 Windows `rd` 改为 Linux `rm -rf`
+
+### 新增文件
+| 文件 | 说明 |
+|------|------|
+| `doc/vision_communication.md` | 通信数据帧格式文档 (JSON 字段/编码/解析示例) |
+| `tools/test_vision_recv.sh` | vision_recv 测试脚本 |
+| `modules/power_switch/` | 电源开关模块 (USART/CAN 双路控制) |
+| `modules/optical_flow/` | 光流传感器模块 (待集成) |
+| `modules/power_meter/` | 功率计模块 (待集成) |
+
 ## 2026-05-26 — 通信性能优化 (166 Hz)
 
 ### 优化
