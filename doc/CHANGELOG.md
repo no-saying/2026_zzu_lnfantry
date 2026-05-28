@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2026-05-28 — 文档完善
+
+### MICROROS_GUIDE 更新
+- **新增 "添加新的 Topic（发布/订阅）" 教程章节**: Publisher 五步法、Subscriber 六步法、Float32/Int32 完整代码模板、消息类型速查表、新增 Topic 检查清单
+
 ## 2026-05-26 — DM 电机协议完善
 
 ### DM 电机协议重写 (`dmmotor.c/h`)

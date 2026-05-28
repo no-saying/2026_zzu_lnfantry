@@ -239,6 +239,258 @@ gimbal_cmd_send.pitch = vision_recv_data->pitch;
 
 在 Makefile 中删除 `-DMICRO_ROS_ENABLED`，vision 数据自动回退到 seasky 协议，`VisionSend()` 和 seasky 解析恢复工作。
 
+## 添加新的 Topic（发布/订阅）
+
+以项目现有的 `vision_send`（发布）和 `vision_recv`（订阅）为例，逐步说明如何新增一个 micro-ROS topic。所有 micro-ROS 初始化代码写在下位机 `Core/Src/freertos.c` 的 `StartMicrorosTask()` 函数中（`#ifdef MICRO_ROS_ENABLED` 块内）。
+
+### 代码写在哪
+
+```
+Core/Src/freertos.c   ← micro-ROS 节点、pub/sub、executor 全部在这里
+├── 静态变量区（文件顶部 #ifdef MICRO_ROS_ENABLED 内）
+│   ├── rcl_publisher_t    ← 每个 publisher 声明一个
+│   ├── rcl_subscription_t ← 每个 subscriber 声明一个
+│   ├── rclc_executor_t    ← 全局一个 executor
+│   └── 消息缓冲区          ← String 类型必须 malloc 预分配
+│
+├── 回调函数（static void）
+│   └── 收到消息后解析数据，写入应用层结构体
+│
+└── StartMicrorosTask()
+    ├── 1. 注册 transport
+    ├── 2. init support + node
+    ├── 3. 初始化 publisher  (rclc_publisher_init_best_effort)
+    ├── 4. 初始化 subscriber (rclc_subscription_init_best_effort)
+    ├── 5. malloc 消息缓冲区
+    ├── 6. 初始化 executor + 添加 subscription
+    └── 7. 主循环: spin_some() + publish()
+```
+
+### 新增一个 Publisher（以 vision_send 为例）
+
+**Step 1 — 声明变量**（文件顶部 `#ifdef MICRO_ROS_ENABLED` 内）:
+
+```c
+static rcl_publisher_t microros_pub_send;                  // publisher 句柄
+static std_msgs__msg__String microros_send_msg;            // 消息体
+```
+
+**Step 2 — 初始化 publisher**（`StartMicrorosTask()` 内，node 创建之后）:
+
+```c
+rclc_publisher_init_best_effort(
+    &microros_pub_send,
+    &microros_node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),    // 消息类型
+    "stm32h723/vision_send"                                // topic 名称
+);
+```
+
+> **QoS 选择**: 高频数据（>50Hz）用 `_best_effort`，重要不丢的数据用 `_default`（RELIABLE）。本项目 vision 数据用 BEST_EFFORT 以达 ~400Hz。
+
+**Step 3 — 预分配消息缓冲区**（仅 String 类型需要）:
+
+```c
+microros_send_msg.data.data = (char *)malloc(256);
+microros_send_msg.data.size = 0;
+microros_send_msg.data.capacity = 256;
+```
+
+> 如果使用 `Int32`、`Float32` 等定长类型，不需要 malloc，直接给字段赋值即可。
+
+**Step 4 — 构造消息并发布**:
+
+```c
+rcl_ret_t microros_publish_vision(void)
+{
+    // 构造 JSON 字符串到 microros_send_msg.data.data
+    char *buf = microros_send_msg.data.data;
+    // ... 用 snprintf 或手写格式化填入 buf ...
+    microros_send_msg.data.size = len;
+
+    rcl_ret_t ret = rcl_publish(&microros_pub_send, &microros_send_msg, NULL);
+    return ret;
+}
+```
+
+如果使用定长类型（如 `std_msgs__msg__Int32`），更简单:
+
+```c
+std_msgs__msg__Int32 msg;
+msg.data = 12345;
+rcl_publish(&my_publisher, &msg, NULL);
+```
+
+**Step 5 — 在主循环中调用发布函数**（`StartMicrorosTask()` 的 `for(;;)` 循环内）:
+
+```c
+for (;;) {
+    // ... spin_some 逻辑 ...
+    microros_publish_vision();   // 每次循环都发布
+    osDelay(1);
+}
+```
+
+### 新增一个 Subscriber（以 vision_recv 为例）
+
+**Step 1 — 声明变量**:
+
+```c
+static rcl_subscription_t microros_sub_recv;               // subscriber 句柄
+static std_msgs__msg__String microros_recv_msg;            // 接收缓冲区
+```
+
+**Step 2 — 编写回调函数**:
+
+```c
+static void microros_vision_recv_cb(const void *msgin)
+{
+    const std_msgs__msg__String *in = (const std_msgs__msg__String *)msgin;
+    if (in == NULL || in->data.data == NULL || in->data.size == 0) return;
+
+    // 解析 JSON 或直接读取字段
+    Vision_Recv_s *recv = VisionGetRecvData();
+    int yaw_cdeg, pitch_cdeg;
+    sscanf(in->data.data, "{\"y\":%d,\"p\":%d}", &yaw_cdeg, &pitch_cdeg);
+    recv->yaw = yaw_cdeg / 100.0f;
+    recv->pitch = pitch_cdeg / 100.0f;
+}
+```
+
+> 回调在 `rclc_executor_spin_some()` 内被调用，处于 micro-ROS 任务上下文，不要做耗时操作。
+
+**Step 3 — 初始化 subscriber**（`StartMicrorosTask()` 内）:
+
+```c
+rclc_subscription_init_best_effort(
+    &microros_sub_recv,
+    &microros_node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
+    "stm32h723/vision_recv"
+);
+```
+
+> subscriber 的 QoS 必须和 publisher 端一致。上位机用 `--qos-best-effort` 则下位机也用 `_best_effort`。
+
+**Step 4 — 预分配接收缓冲区**（String 类型必须做）:
+
+```c
+microros_recv_msg.data.data = (char *)malloc(256);
+microros_recv_msg.data.size = 0;
+microros_recv_msg.data.capacity = 256;
+```
+
+> **不预分配是最常见的坑**: micro-ROS 反序列化 String 时需要目标缓冲区已就绪，否则回调静默不触发。
+
+**Step 5 — 将 subscriber 加入 executor**:
+
+```c
+rclc_executor_init(&microros_executor, &microros_support.context,
+                   2,                  // handles 数量 = pub数 + sub数
+                   &microros_allocator);
+rclc_executor_add_subscription(
+    &microros_executor,
+    &microros_sub_recv,
+    &microros_recv_msg,
+    microros_vision_recv_cb,           // 回调函数
+    ON_NEW_DATA                        // 有新数据才触发
+);
+```
+
+> `handles` 数量必须 ≥ (publisher 数 + subscriber 数)，否则 executor 初始化失败。
+
+**Step 6 — 在主循环中 spin executor**:
+
+```c
+for (;;) {
+    if (++cycle >= 2) {               // 每 2 次循环 spin 一次，平衡收发
+        cycle = 0;
+        rclc_executor_spin_some(&microros_executor, RCL_MS_TO_NS(1));
+    }
+    microros_publish_vision();
+    osDelay(1);
+}
+```
+
+### 完整模板：新增一个 Float32 Publisher
+
+以下是从零添加一个新 topic 的完整 diff 示例 — 发布 `std_msgs/msg/Float32` 到 `stm32h723/battery_voltage`:
+
+```c
+// ===== 文件顶部变量声明区 =====
+static rcl_publisher_t battery_pub;
+static std_msgs__msg__Float32 battery_msg;
+
+// ===== StartMicrorosTask() 内，node 初始化之后 =====
+rclc_publisher_init_best_effort(
+    &battery_pub,
+    &microros_node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+    "stm32h723/battery_voltage"
+);
+
+// ===== 主循环的 for(;;) 内，发布处 =====
+battery_msg.data = 24.0f;  // 从实际传感器读取
+rcl_publish(&battery_pub, &battery_msg, NULL);
+```
+
+> 定长类型不需要 `malloc`，不需要处理 `data.size`/`data.capacity`，直接用。
+
+### 完整模板：新增一个 Int32 Subscriber
+
+接收 `std_msgs/msg/Int32` 控制指令:
+
+```c
+// ===== 文件顶部变量声明区 =====
+static rcl_subscription_t cmd_sub;
+static std_msgs__msg__Int32 cmd_msg;
+
+// ===== 回调函数 =====
+static void cmd_callback(const void *msgin)
+{
+    const std_msgs__msg__Int32 *in = (const std_msgs__msg__Int32 *)msgin;
+    if (in == NULL) return;
+    // 直接用 in->data，无需 malloc/解析
+    set_motor_speed(in->data);
+}
+
+// ===== StartMicrorosTask() 内 =====
+rclc_subscription_init_default(         // _default = RELIABLE
+    &cmd_sub,
+    &microros_node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+    "stm32h723/motor_cmd"
+);
+
+// executor handles 数量 +1 (原来是 2，现在 3)
+rclc_executor_init(&microros_executor, &microros_support.context,
+                   3, &microros_allocator);
+rclc_executor_add_subscription(&microros_executor, &cmd_sub,
+                               &cmd_msg, cmd_callback, ON_NEW_DATA);
+```
+
+### 常见消息类型速查
+
+| ROS 2 类型 | C 类型 | 需预分配 | QoS 建议 |
+| ----------- | ------ | -------- | -------- |
+| `std_msgs/msg/String` | `std_msgs__msg__String` | **是** malloc data.data | 按需 |
+| `std_msgs/msg/Int32` | `std_msgs__msg__Int32` | 否 | RELIABLE |
+| `std_msgs/msg/Float32` | `std_msgs__msg__Float32` | 否 | BEST_EFFORT |
+| `std_msgs/msg/Bool` | `std_msgs__msg__Bool` | 否 | RELIABLE |
+| `std_msgs/msg/Int32MultiArray` | `std_msgs__msg__Int32MultiArray` | **是** malloc data.data | 按需 |
+| `sensor_msgs/msg/Imu` | `sensor_msgs__msg__Imu` | 否 | BEST_EFFORT |
+
+### 新增 Topic 检查清单
+
+- [ ] 变量声明在 `#ifdef MICRO_ROS_ENABLED` 块内（否则关 micro-ROS 时编译报错）
+- [ ] publisher 初始化在 `rclc_node_init_default` 之后
+- [ ] String/MultiArray 类型已 `malloc` 缓冲区
+- [ ] subscriber 已添加到 executor（`rclc_executor_add_subscription`）
+- [ ] executor `handles` 数量 ≥ pub + sub 总数
+- [ ] 回调函数标记为 `static`，不做耗时操作
+- [ ] 编译前确认 `-DMICRO_ROS_ENABLED` 在 Makefile C_DEFS 中
+- [ ] 上位机 `ros2 topic echo/list` 能发现新 topic
+
 ## Topic 信息
 
 | 属性 | vision_send (下位机→上位机) | vision_recv (上位机→下位机) |
