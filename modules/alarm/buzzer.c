@@ -1,7 +1,12 @@
 #include "bsp_pwm.h"
 #include "buzzer.h"
 #include "bsp_dwt.h"
+#include "music_player.h"
 #include "string.h"
+
+#ifdef MUSIC_PLAYER_ENABLED
+#include "music_songs/haruhikage.h"
+#endif
 
 static PWMInstance *buzzer;
 // static uint8_t idx;
@@ -20,6 +25,12 @@ void BuzzerInit()
         .period = 0.001,
     };
     buzzer = PWMRegister(&buzzer_config);
+    MusicPlayerInit(buzzer);
+}
+
+PWMInstance *BuzzerGetPWM(void)
+{
+    return buzzer;
 }
 
 BuzzzerInstance *BuzzerRegister(Buzzer_config_s *config)
@@ -46,11 +57,29 @@ void AlarmSetStatus(BuzzzerInstance *buzzer, AlarmState_e state)
 
 void BuzzerTask()
 {
+    MusicPlayerTask();
+
+#ifdef MUSIC_PLAYER_ENABLED
+    /* 开机自动播放春日影 (延迟约 2s 等系统就绪) */
+    {
+        static uint16_t boot_delay = 200; /* 2s @ 100Hz */
+        if (boot_delay) {
+            boot_delay--;
+            if (boot_delay == 0)
+                MusicPlayerPlay(song_haruhikage);
+        }
+    }
+#endif
+
+    /* 音乐播放中跳过警报, 避免 PWM 冲突 */
+    if (MusicPlayerIsPlaying())
+        return;
+
     BuzzzerInstance *buzz;
     for (size_t i = 0; i < BUZZER_DEVICE_CNT; ++i)
     {
         buzz = buzzer_list[i];
-        if (buzz->alarm_level > ALARM_LEVEL_LOW)
+        if (buzz == NULL || buzz->alarm_level > ALARM_LEVEL_LOW)
         {
             continue;
         }

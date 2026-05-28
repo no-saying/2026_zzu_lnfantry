@@ -132,6 +132,7 @@ modules/motor/GOmotor/go_motor.c \
 modules/motor/step_motor/step_motor.c \
 modules/motor/servo_motor/servo_motor.c \
 modules/motor/motor_task.c \
+modules/power_switch/power_switch.c \
 modules/oled/oled.c \
 modules/referee/crc_ref.c \
 modules/referee/rm_referee.c \
@@ -143,6 +144,7 @@ modules/message_center/message_center.c \
 modules/daemon/daemon.c \
 modules/buffer/buffer.c \
 modules/alarm/buzzer.c \
+modules/alarm/music_player.c \
 application/gimbal/gimbal.c \
 application/chassis/chassis.c \
 application/shoot/shoot.c \
@@ -211,7 +213,8 @@ C_DEFS =  \
 -DARM_MATH_CM7 \
 -DDISABLE_LOG_SYSTEM \
 -DCOMM_USE_VCP \
--DMICRO_ROS_ENABLED
+-DMICRO_ROS_ENABLED \
+-DMUSIC_PLAYER_ENABLED
 
 
 # AS includes
@@ -260,6 +263,7 @@ C_INCLUDES =  \
 -Imodules/motor/DMmotor \
 -Imodules/motor/GOmotor \
 -Imodules/motor \
+-Imodules/power_switch \
 -Imodules/oled \
 -Imodules/referee \
 -Imodules/remote \
@@ -268,6 +272,7 @@ C_INCLUDES =  \
 -Imodules/message_center \
 -Imodules/daemon \
 -Imodules/alarm \
+-Imodules/alarm/music_songs \
 -Imodules/buffer \
 -Imodules \
 -IMiddlewares/ST/ARM/DSP/Inc \
@@ -356,7 +361,7 @@ $(BUILD_DIR):
 # clean up
 #######################################
 clean:
-	rd $(BUILD_DIR) /s/q
+	rm -rf $(BUILD_DIR)
   
 #######################################
 # dependencies

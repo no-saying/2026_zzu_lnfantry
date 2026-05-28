@@ -1,4 +1,5 @@
 remote_control
+<p align='right'>neozng1@hnu.edu.cn</p>
 ```
 /*************************发射机DT7***************************
  *                                                            *

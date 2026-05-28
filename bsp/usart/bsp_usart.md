@@ -1,5 +1,6 @@
 # bsp_usart
 
+<p align='right'>neozng1@hnu.edu.cn</p>
 
 > TODO: 增加发送队列以解决短时间内调用`USARTSend()`发生丢包的问题,目前仅支持DMA。还需要提供阻塞和IT模式以供选择，参考bspiic和spi进行实现。
 > 可以直接在发送函数的参数列表添加发送模式选择,或增加instance成员变量,并提供设置模式接口,两者各有优劣
@@ -77,3 +78,6 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 - `USARTServiceInit()`会被`USARTRegister()`调用，开启接收中断
 
 - `HAL_UARTEx_RxEventCallback()`和`HAL_UART_ErrorCallback()`都是对HAL的回调函数的重定义（原本的callback是`__week`修饰的弱定义），前者在发生**IDLE中断**或**单次DMA传输中断**后会被调用（说明收到了完整的一包数据），随后在里面根据中断来源，调用拥有产生了该中断的模块的协议解析函数进行数据解包；后者在串口传输出错的时候会被调用，重新开启接收。
+
+## 485总线
+目前添加了485协议，混合在一起(破案了，写代码写迷糊了，目前485通信与通常无异)

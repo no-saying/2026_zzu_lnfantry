@@ -173,10 +173,12 @@ static void SplitChassisCommands()
  * @brief 控制输入为遥控器(调试时)的模式和控制量设置
  *
  */
+static uint8_t gimbal_flag=0, vision_flag=0;
 static void RemoteControlSet()
 {
     // 控制底盘和云台运行模式,云台待添加,云台是否始终使用IMU数据?
     gimbal_cmd_send.gimbal_mode = GIMBAL_GYRO_MODE;
+#ifdef DBUS
     if (switch_is_down(rc_data[TEMP].rc.switch_left)) // 左侧开关状态[下],底盘和云台分离,底盘保持不转动
     {
         nav_recv_data->vx = 0;
@@ -189,8 +191,8 @@ static void RemoteControlSet()
         //  待添加,视觉会发来和目标的误差,同样将其转化为total angle的增量进行控制
         // ...
         if(vision_recv_data->yaw < 180 &&
-           vision_recv_data->pitch < 30 && 
-           vision_recv_data->yaw > -180 && 
+           vision_recv_data->pitch < 30 &&
+           vision_recv_data->yaw > -180 &&
            vision_recv_data->pitch > -30) // 异常数据判断
         {
              // chassis_cmd_send.yaw = aligned_total_yaw + vision_recv_data->yaw;gimbal_fetch_data.gimbal_imu_data.YawTotalAngle
@@ -205,14 +207,8 @@ static void RemoteControlSet()
         // chassis_cmd_send.wz = nav_recv_data->wz;
         // gimbal_cmd_send.pitch = 0;
     }
-    // else
-    // {
-    //     chassis_cmd_send.vx = +26.0f * (float)rc_data[TEMP].rc.rocker_l_; // _水平方向
-    //     chassis_cmd_send.vy = +26.0f * (float)rc_data[TEMP].rc.rocker_l1; // 1数值方向
-    // }
 
     // 云台参数,确定云台控制数据
-
     // 左侧开关状态为[下],或视觉未识别到目标,纯遥控器拨杆控制
     if (switch_is_down(rc_data[TEMP].rc.switch_left) || !vision_recv_data->yaw || !vision_recv_data->pitch)
     { // 按照摇杆的输出大小进行角度增量,增益系数需调整
@@ -227,17 +223,64 @@ static void RemoteControlSet()
         }
         gimbal_cmd_send.pitch += 0.001f * (float)rc_data[TEMP].rc.rocker_r1;
     }
+#endif
+#ifdef USART_VT13
+    if (rc_data[TEMP].rc.switch_m==2 && rc_data[TEMP].rc.button_l==1) // switch_m 下, 底盘和云台分离
+    {
+        nav_recv_data->vx = 0;
+        nav_recv_data->vy = 0;
+        nav_recv_data->wz = 0;
+        gimbal_cmd_send.gimbal_mode = GIMBAL_GYRO_MODE;
+        vision_flag=0;
+    }
+    else if(rc_data[TEMP].rc.switch_m==1 && rc_data[TEMP].rc.button_l==1) // switch_m 中, 视觉导航
+    {
+        vision_flag=1;
+        gimbal_flag=1;
+    }
+    if (vision_flag == 1 && (vision_recv_data->yaw || vision_recv_data->pitch))
+    {
+        if(vision_recv_data->yaw < 180 &&
+           vision_recv_data->pitch < 30 &&
+           vision_recv_data->yaw > -180 &&
+           vision_recv_data->pitch > -30)
+        {
+             gimbal_cmd_send.yaw = -vision_recv_data->yaw;
+             gimbal_cmd_send.pitch = ( vision_recv_data->pitch);
+             rnm = -vision_recv_data->pitch;
+        }
+    }
+    if (rc_data[TEMP].rc.switch_m==2 && rc_data[TEMP].rc.button_l==1)
+    {
+        gimbal_flag=0;
+    }
+    if (gimbal_flag==0 || !vision_recv_data->yaw || !vision_recv_data->pitch)
+    { // 手动云台控制
+        if(gimbal_cmd_send.yaw - delayed_total_yaw < 60 && gimbal_cmd_send.yaw - delayed_total_yaw > -60)
+        {
+            gimbal_cmd_send.yaw += 0.005f * (float)rc_data[TEMP].rc.rocker_r_;
+        }else
+        if(gimbal_cmd_send.yaw - delayed_total_yaw > 60){
+            gimbal_cmd_send.yaw = delayed_total_yaw + 60;
+        }else{
+            gimbal_cmd_send.yaw = delayed_total_yaw - 60;
+        }
+        gimbal_cmd_send.pitch += 0.001f * (float)rc_data[TEMP].rc.rocker_r1;
+    }
+#endif
     // 云台软件限位
     gimbal_cmd_send.pitch = gimbal_cmd_send.pitch > PITCH_MIN_ANGLE ? gimbal_cmd_send.pitch : PITCH_MIN_ANGLE;
     gimbal_cmd_send.pitch = gimbal_cmd_send.pitch < PITCH_MAX_ANGLE ? gimbal_cmd_send.pitch : PITCH_MAX_ANGLE;
+
+#ifdef DBUS
     // 底盘参数,目前没有加入小陀螺(调试似乎暂时没有必要),系数需要调整
     if(rc_data[TEMP].rc.rocker_l1 || rc_data[TEMP].rc.rocker_l_ || switch_is_down(rc_data[TEMP].rc.switch_left)){
         chassis_cmd_send.vx = + 26 * (float)rc_data[TEMP].rc.rocker_l_; // _水平方向
         chassis_cmd_send.vy = + 26 * (float)rc_data[TEMP].rc.rocker_l1; // 1数值方向
     }
-    if (switch_is_up(rc_data[TEMP].rc.switch_right)) 
+    if (switch_is_up(rc_data[TEMP].rc.switch_right))
     {
-        chassis_cmd_send.chassis_mode = CHASSIS_ROTATE;   
+        chassis_cmd_send.chassis_mode = CHASSIS_ROTATE;
     }
     else if (switch_is_mid(rc_data[TEMP].rc.switch_right))
     {
@@ -245,11 +288,7 @@ static void RemoteControlSet()
     }
     else if (switch_is_down(rc_data[TEMP].rc.switch_right))
     {
-        chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW; 
-        // gimbal_cmd_send.gimbal_mode = GIMBAL_DEBUG_MODE;
-        // gimbal_cmd_send.yaw = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle;
-        // gimbal_cmd_send.pitch = gimbal_fetch_data.gimbal_imu_data.Pitch;
-        // gimbal_cmd_send.gimbal_mode =  GIMBAL_DEBUG_MODE;
+        chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW;
     }
     // 发射参数
     // 摩擦轮控制,拨轮向上打为负,向下为正
@@ -267,7 +306,33 @@ static void RemoteControlSet()
     else
         shoot_cmd_send.load_mode = LOAD_STOP;
     // 射频控制,固定每秒1发,后续可以根据左侧拨轮的值大小切换射频,LOAD_BURSTFIRE
-    
+#endif
+#ifdef USART_VT13
+    // 底盘参数
+    chassis_cmd_send.vx = + 26 * (float)rc_data[TEMP].rc.rocker_l_;
+    chassis_cmd_send.vy = + 26 * (float)rc_data[TEMP].rc.rocker_l1;
+    if (rc_data[TEMP].rc.switch_m==0 && rc_data[TEMP].rc.button_r==1)
+    {
+        chassis_cmd_send.chassis_mode = CHASSIS_ROTATE;
+    }
+    else if (rc_data[TEMP].rc.switch_m==1 && rc_data[TEMP].rc.button_r==1)
+    {
+        chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW;
+    }
+    else if (rc_data[TEMP].rc.switch_m==2 && rc_data[TEMP].rc.button_r==1)
+    {
+        chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW;
+    }
+    // 发射参数
+    if (rc_data[TEMP].rc.trigger_cutton==1)
+        shoot_cmd_send.friction_mode = FRICTION_ON;
+    else
+        shoot_cmd_send.friction_mode = FRICTION_OFF;
+    if ((rc_data[TEMP].rc.dial < -100||vision_recv_data->fire_tem==1)&&shoot_cmd_send.friction_mode==FRICTION_ON)
+        shoot_cmd_send.load_mode = LOAD_3_BULLET;
+    else
+        shoot_cmd_send.load_mode = LOAD_STOP;
+#endif
 }
 
 /**
@@ -384,8 +449,11 @@ static void MouseKeySet()
  * @todo   后续修改为遥控器离线则电机停止(关闭遥控器急停),通过给遥控器模块添加daemon实现
  *
  */
+static uint8_t last_button_state = 0;
+static uint8_t press_count = 0;
 static void EmergencyHandler()
 {
+#ifdef DBUS
     // 拨轮的向下拨超过一半进入急停模式.注意向打时下拨轮是正
     if (rc_data[TEMP].rc.dial > 300 || robot_state == ROBOT_STOP) // 还需添加重要应用和模块离线的判断
     {
@@ -405,6 +473,37 @@ static void EmergencyHandler()
         shoot_cmd_send.lid_mode = LID_CLOSE;
         // LOGINFO("[CMD] reinstate, robot ready");
     }
+#endif
+#ifdef USART_VT13
+    uint8_t cur_button_state = rc_data[TEMP].rc.button_stop;
+    // 检测上升沿（按下瞬间）
+    if (cur_button_state == 1 && last_button_state == 0)
+    {
+        press_count++;
+        if (press_count >= 1)
+        {
+            press_count = 0;
+            // 翻转机器人状态
+            if (robot_state == ROBOT_READY)
+            {
+                robot_state = ROBOT_STOP;
+                gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;
+                chassis_cmd_send.chassis_mode = CHASSIS_ZERO_FORCE;
+                shoot_cmd_send.shoot_mode = SHOOT_OFF;
+                shoot_cmd_send.friction_mode = FRICTION_OFF;
+                shoot_cmd_send.load_mode = LOAD_STOP;
+                shoot_cmd_send.lid_mode = LID_OPEN;
+            }
+            else
+            {
+                robot_state = ROBOT_READY;
+                shoot_cmd_send.shoot_mode = SHOOT_ON;
+                shoot_cmd_send.lid_mode = LID_CLOSE;
+            }
+        }
+    }
+    last_button_state = cur_button_state;
+#endif
 }
 
 void chassisCANSendCommands()
@@ -440,12 +539,31 @@ void RobotCMDTask()
     CalcOffsetAngle();
     
     // 根据遥控器左侧开关,确定当前使用的控制模式为遥控器调试还是键鼠
-    if (switch_is_down(rc_data[TEMP].rc.switch_left) || switch_is_mid(rc_data[TEMP].rc.switch_left)) // 遥控器左侧开关状态为[下],遥控器控制
+    static uint8_t rc_flag=0;
+#ifdef DBUS
+    if (switch_is_down(rc_data[TEMP].rc.switch_left) || switch_is_mid(rc_data[TEMP].rc.switch_left))
         RemoteControlSet();
-    else if (switch_is_up(rc_data[TEMP].rc.switch_left)) // 遥控器左侧开关状态为[上],键盘控制
+    else if (switch_is_up(rc_data[TEMP].rc.switch_left))
     {
         //MouseKeySet();
     }
+#endif
+#ifdef USART_VT13
+    if(rc_data[TEMP].rc.switch_m==2 && rc_data[TEMP].rc.button_l==1)
+    {
+        rc_flag=0;
+    }
+    if(rc_data[TEMP].rc.switch_m==0 && rc_data[TEMP].rc.button_l==1)
+    {
+        rc_flag=1;
+    }
+    if (rc_flag==0)
+        RemoteControlSet();
+    else if (rc_flag==1)
+    {
+        //MouseKeySet();
+    }
+#endif
         
 
     EmergencyHandler(); // 处理模块离线和遥控器急停等紧急情况
