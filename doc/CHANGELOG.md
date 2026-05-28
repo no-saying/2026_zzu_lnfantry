@@ -1,9 +1,45 @@
 # 更新日志
 
-## 2026-05-28 — 文档完善
+## 2026-05-28 — 音乐播放器 + 文档完善
+
+### 整活功能: 蜂鸣器音乐播放器 (`modules/alarm/music_player`)
+- **非阻塞乐谱播放**: 状态机驱动 (IDLE → NOTE_ON → NOTE_GAP)，基于 FreeRTOS tick 计时，不阻塞任务循环
+- **音符系统**: A0~C8 共 89 个音符枚举 + 频率表 (A4=440Hz 基准)
+- **乐谱编码**: `{NOTE, duration}` 交替排列, 0xFF 结尾, 八分音符=62.5ms
+- **《春日影》乐谱** (`music_songs/haruhikage.h`): 完整歌曲, ~10KB, 开机自启动
+- **PWM 复用**: 音乐播放时自动暂停警报，`MusicPlayerIsPlaying()` 返回 1 时 `BuzzerTask()` 跳过警报处理
+- **宏切换**: `-DMUSIC_PLAYER_ENABLED` 控制编译, 未启用时空桩无开销
+- **可扩展**: 新建 `.h` 乐谱文件 + `MusicPlayerPlay(song_xxx)` 即可添加新曲
+
+### 新增文件
+| 文件 | 说明 |
+|------|------|
+| `modules/alarm/music_player.h` | 播放器 API + 音符枚举 |
+| `modules/alarm/music_player.c` | 状态机实现 |
+| `modules/alarm/music_songs/haruhikage.h` | 春日影乐谱数据 |
 
 ### MICROROS_GUIDE 更新
 - **新增 "添加新的 Topic（发布/订阅）" 教程章节**: Publisher 五步法、Subscriber 六步法、Float32/Int32 完整代码模板、消息类型速查表、新增 Topic 检查清单
+
+### 遥控器协议: VT13/SBUS 双协议支持
+- **robot_cmd.c**: `RemoteControlSet()` / `EmergencyHandler()` 新增 `#ifdef USART_VT13` 分支
+  - VT13 模式使用 `switch_m` (上/中/下) + `button_l`/`button_r` 切换底盘/云台/视觉模式
+  - `button_stop` 边沿检测触发紧急停止，替代 DBUS 的 `dial > 300` 方案
+  - 新增 `gimbal_flag`/`vision_flag` 状态变量管理模式切换
+- **remote_control.c**: 新增 `#ifdef SBUS` 协议解码 (25 字节帧)，原有 DBUS 解包用 `#ifdef DBUS` 守卫
+- **remote_control.h**: 新增 `button_stop`/`button_l`/`button_r`/`switch_m` 等 VT13 遥控器字段
+
+### BSP USART: RS485 总线支持
+- **bsp_usart**: 新增 `enable_485`/`id` 字段用于 RS485 多设备总线
+- 新增 `USART_H7_SetBaudRateOnly()` 函数
+
+### 修复
+- **buzzer.c**: 警报循环新增 NULL 指针检查，修复 `buzzer_list[1..4]` 未注册导致的启动崩溃
+- **music_songs/haruhikage.h**: 移除 `static` 修饰符，修复与 `music_player.h` 的 `extern` 声明冲突
+
+### 文档更新
+- **buzzer.md**: 新增音乐模式使用说明、乐谱编码格式、添加歌曲方法
+- **remote.md**: 新增 VT13 遥控器说明
 
 ## 2026-05-26 — DM 电机协议完善
 
